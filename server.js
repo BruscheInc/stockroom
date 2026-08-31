@@ -24,6 +24,28 @@ const { Pool } = require("pg");
 const ACCESS_KEY = process.env.ACCESS_KEY || process.env.STOCKROOM_KEY || "";
 const SHOP_VER = process.env.SHOPIFY_API_VERSION || "2025-07";
 
+// Named users: each person's login key IS their username, so every change is attributed to them.
+// STOCKROOM_USERS = comma-separated. Each entry is "Name" (key == name) or "Name:secretkey" (named but secret).
+function loadUsers() {
+  const out = [];
+  const raw = process.env.STOCKROOM_USERS || process.env.USERS || "";
+  for (const e of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const [name, key] = e.split(":").map((x) => (x || "").trim());
+    if (name) out.push({ name, key: key || name });
+  }
+  return out;
+}
+const USERS = loadUsers();
+// Resolve a login key to a username (case-insensitive). Falls back to the legacy ACCESS_KEY as "admin".
+function userFromKey(key) {
+  const k = String(key || "").trim();
+  if (!k) return null;
+  const u = USERS.find((u) => u.key.toLowerCase() === k.toLowerCase());
+  if (u) return u.name;
+  if (ACCESS_KEY && k === ACCESS_KEY) return "admin";
+  return null;
+}
+
 /* ------------------------------------------------ Postgres ------------------------------------------------ */
 // Railway's INTERNAL url (postgres.railway.internal) must connect WITHOUT ssl; the public proxy needs it.
 const DB_URL = process.env.DATABASE_URL || "";
@@ -314,7 +336,8 @@ async function resolveCode(raw) {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 function keyFrom(req) { return req.query.key || req.get("x-stockroom-key") || (req.body && req.body.key) || ""; }
-const authed = (req) => ACCESS_KEY && keyFrom(req) === ACCESS_KEY;
+const authed = (req) => userFromKey(keyFrom(req)) !== null;
+const actorOf = (req) => userFromKey(keyFrom(req)) || "unknown";
 function guard(req, res) { if (!authed(req)) { res.status(401).json({ error: "unauthorized" }); return false; } return true; }
 
 app.use(express.static(path.join(__dirname, "public"), {
@@ -322,7 +345,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/api/role", (req, res) => res.json({ ok: authed(req) }));
+app.get("/api/role", (req, res) => res.json({ ok: authed(req), user: userFromKey(keyFrom(req)) }));
 
 // Resolve any scanned/typed code.
 app.get("/api/resolve", async (req, res) => {
@@ -367,9 +390,10 @@ app.get("/api/history/:sku", async (req, res) => {
 app.post("/api/move", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const { sku, toBin, user, note, qtySeen } = req.body || {};
+    const { sku, toBin, note, qtySeen } = req.body || {};
     if (!sku) return res.status(400).json({ error: "sku required" });
-    res.json(await moveItem({ sku, toBin, user, note, qtySeen, source: "scan" }));
+    // Actor is derived from the login key, not the client — so history always reflects who is signed in.
+    res.json(await moveItem({ sku, toBin, user: actorOf(req), note, qtySeen, source: "scan" }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Bins registry.
@@ -430,7 +454,7 @@ const PORT = process.env.PORT || 8080;
   catch (e) { console.error("❌ DB migrate failed:", e.message); }
   app.listen(PORT, () => {
     console.log(`📦 Stockroom on :${PORT}`);
-    console.log(`🔎 boot → key:${ACCESS_KEY ? "set" : "MISSING"} · db:${process.env.DATABASE_URL ? "set" : "MISSING"} · shopify:${STORES.length} stores · shipstation:${ssConfigured() ? "set" : "off"} · ver:${SHOP_VER}`);
+    console.log(`🔎 boot → users:${USERS.length ? USERS.map((u) => u.name).join("/") : "(none)"}${ACCESS_KEY ? "+admin-key" : ""} · db:${process.env.DATABASE_URL ? "set" : "MISSING"} · shopify:${STORES.length} stores · shipstation:${ssConfigured() ? "set" : "off"} · ver:${SHOP_VER}`);
   });
   // Live reachability probes.
   if (ssConfigured()) {
