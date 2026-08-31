@@ -67,6 +67,9 @@
   .binlist a:last-child{border-bottom:none}
   .hidden{display:none!important}
   .center{text-align:center}
+  .topbar{position:sticky;top:0;z-index:15;display:flex;justify-content:flex-end;padding:8px 14px;background:var(--bg);border-bottom:1px solid var(--line)}
+  .topbar .btn{padding:9px 20px;border-radius:10px;font-size:14px}
+  #refreshBtn.spin{opacity:.6}
   .filters{display:flex;align-items:center;gap:8px;margin:-2px 0 12px;flex-wrap:wrap}
   .chips{display:flex;gap:6px;flex:1;min-width:0}
   .chip{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 13px;font-size:13px;font-weight:600}
@@ -92,6 +95,7 @@
   <div class="logo">📦 <b>Stockroom</b></div>
   <div class="who">👤 <b id="whoName" style="color:var(--ink)">…</b> <a href="#" onclick="signOut();return false" style="color:var(--muted);margin-left:8px;font-size:12px">sign out</a></div>
 </header>
+<div class="topbar"><button class="btn blue" id="refreshBtn" onclick="refreshNow()">⟳ Refresh</button></div>
 
 <div class="wrap">
   <!-- SCAN TAB -->
@@ -157,6 +161,7 @@ function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; try{localS
 function signOut(){ try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
 let CURRENT_USER="";
 function whoName(){ return CURRENT_USER; }
+let currentView=null; // {kind:'bin',key} — drives live auto-refresh of shared views
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2200); }
 async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("Unauthorized — check access key",true); throw new Error("401"); } return r.json(); }
@@ -172,6 +177,9 @@ else {
       $("whoName").textContent = CURRENT_USER;
       if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
       keepFocus(); loadBins();
+      // Live freshness: refresh the Bins list / open bin view so changes others save appear automatically.
+      setInterval(liveRefresh, 15000);
+      document.addEventListener("visibilitychange",()=>{ if(!document.hidden) liveRefresh(); });
     } else {
       try{ localStorage.removeItem("sk_key"); }catch(e){}
       $("keygate").classList.remove("hidden");
@@ -214,7 +222,9 @@ function stopCamera(){ $("camBtn").textContent="📷 Scan with camera"; $("reade
   if(html5qr){ html5qr.stop().then(()=>html5qr.clear()).catch(()=>{}); } camOn=false; }
 
 /* ---------- lookup / render ---------- */
+let lastCode=null;
 async function lookup(code){
+  lastCode=code;
   $("result").innerHTML='<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
   showTab("scan");
   let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); }catch(e){ return; }
@@ -233,6 +243,7 @@ function histRows(h){
 }
 function fmt(ts){ try{ return new Date(ts).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ts; } }
 function renderItem(d){
+  currentView=null; // item views aren't auto-refreshed (avoids clobbering a move in progress)
   const binPill = d.current_bin ? `<span class="pill bin">📍 ${esc(d.current_bin)}</span>` : `<span class="pill nobin">no bin set</span>`;
   $("result").innerHTML=`
     <div class="card">
@@ -262,6 +273,7 @@ function renderItem(d){
     </div>`;
 }
 function renderBin(d){
+  currentView={kind:"bin",key:d.bin}; // keep this bin view live
   const rows = (d.items&&d.items.length)? d.items.map(it=>`<tr><td class="mono">${esc(it.sku)}</td><td>${esc(it.title||"")}</td><td class="muted">${fmt(it.updated_at)}</td></tr>`).join("")
     : '<tr><td colspan="3" class="muted">No items assigned to this bin yet.</td></tr>';
   $("result").innerHTML=`
@@ -275,6 +287,7 @@ function renderBin(d){
     </div>`;
 }
 function renderUnknown(d){
+  currentView=null;
   $("result").innerHTML=`<div class="card center">
     <p class="title">Unknown code</p>
     <div class="sub mono">${esc(d.code)}</div>
@@ -292,6 +305,25 @@ async function doMove(sku){
     toast(msg, !!(r.shipstation&&r.shipstation.error));
     lookup(sku);
   }catch(e){ toast("Save failed",true); }
+}
+
+/* ---------- live + manual refresh ---------- */
+// Silent background refresh of whatever shared view is open.
+function liveRefresh(){
+  if(document.hidden) return;
+  if(!$("tab-bins").classList.contains("hidden")){ loadBins(); return; }
+  if(!$("tab-scan").classList.contains("hidden") && currentView && currentView.kind==="bin"){
+    api("/api/bin/"+encodeURIComponent(currentView.key)).then(d=>{ if(d && !d.error) renderBin(d); }).catch(()=>{});
+  }
+}
+// The Refresh button: reload whatever the user is currently looking at, with feedback.
+function refreshNow(){
+  const b=$("refreshBtn"); if(b){ b.classList.add("spin"); setTimeout(()=>b.classList.remove("spin"),700); }
+  if(!$("tab-bins").classList.contains("hidden")){ loadBins(); }
+  else if(!$("tab-search").classList.contains("hidden")){ doFind(); }
+  else if(currentView && currentView.kind==="bin"){ api("/api/bin/"+encodeURIComponent(currentView.key)).then(d=>{ if(d && !d.error) renderBin(d); }).catch(()=>{}); }
+  else if(lastCode){ lookup(lastCode); }
+  toast("Refreshed");
 }
 
 /* ---------- bins tab ---------- */
