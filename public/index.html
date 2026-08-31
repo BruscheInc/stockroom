@@ -67,6 +67,11 @@
   .binlist a:last-child{border-bottom:none}
   .hidden{display:none!important}
   .center{text-align:center}
+  .filters{display:flex;align-items:center;gap:8px;margin:-2px 0 12px;flex-wrap:wrap}
+  .chips{display:flex;gap:6px;flex:1;min-width:0}
+  .chip{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 13px;font-size:13px;font-weight:600}
+  .chip.on{background:rgba(57,217,138,.16);border-color:var(--accent);color:var(--accent)}
+  #sort{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:13px}
   .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
   .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
   @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;inset:0;padding:24px;color:#000;background:#fff} }
@@ -77,15 +82,15 @@
 
 <div id="keygate" class="keyprompt hidden">
   <h2>Brusche Stockroom</h2>
-  <p class="muted">Enter your access key to continue.</p>
-  <input id="keyInput" placeholder="access key" autocomplete="off" />
-  <button class="btn wide" onclick="saveKey()">Enter</button>
+  <p class="muted" id="gateMsg">Enter your username to sign in.</p>
+  <input id="keyInput" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
+  <button class="btn wide" onclick="saveKey()">Sign in</button>
 </div>
 
 <div id="appwrap" class="hidden">
 <header>
   <div class="logo">📦 <b>Stockroom</b></div>
-  <div class="who">👤 <input id="who" placeholder="your name" autocomplete="off" /></div>
+  <div class="who">👤 <b id="whoName" style="color:var(--ink)">…</b> <a href="#" onclick="signOut();return false" style="color:var(--muted);margin-left:8px;font-size:12px">sign out</a></div>
 </header>
 
 <div class="wrap">
@@ -117,6 +122,19 @@
     <div class="scanbar">
       <input id="q" placeholder="Search by name or SKU (e.g. milk chocolate)…" autocomplete="off" oninput="doFind()" />
     </div>
+    <div class="filters">
+      <div class="chips">
+        <button class="chip on" data-st="ACTIVE" onclick="toggleChip(this)">Active</button>
+        <button class="chip on" data-st="DRAFT" onclick="toggleChip(this)">Draft</button>
+        <button class="chip on" data-st="ARCHIVED" onclick="toggleChip(this)">Inactive</button>
+      </div>
+      <select id="sort" onchange="renderFind()">
+        <option value="qty_desc">Qty: high → low</option>
+        <option value="qty_asc">Qty: low → high</option>
+        <option value="bin_asc">Bin: low → high</option>
+        <option value="bin_desc">Bin: high → low</option>
+      </select>
+    </div>
     <div id="searchres" class="card"><div class="muted center">Type a product name or SKU to search all stores.</div></div>
   </section>
 </div>
@@ -135,18 +153,31 @@
 /* ---------- key / state ---------- */
 const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("key"); if(u){localStorage.setItem("sk_key",u);return u;} return localStorage.getItem("sk_key")||""; }catch(e){ return ""; } })();
 const $ = (id)=>document.getElementById(id);
-function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; localStorage.setItem("sk_key",v); location.href=location.pathname+"?key="+encodeURIComponent(v); }
-function whoName(){ return ($("who")&&$("who").value.trim())|| localStorage.getItem("sk_who") || ""; }
+function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; try{localStorage.setItem("sk_key",v);}catch(e){} location.href=location.pathname+"?key="+encodeURIComponent(v); }
+function signOut(){ try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
+let CURRENT_USER="";
+function whoName(){ return CURRENT_USER; }
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2200); }
 async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("Unauthorized — check access key",true); throw new Error("401"); } return r.json(); }
 
 if(!KEY){ $("keygate").classList.remove("hidden"); }
 else {
-  $("appwrap").classList.remove("hidden");
-  if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
-  const w=$("who"); w.value=localStorage.getItem("sk_who")||""; w.addEventListener("change",()=>localStorage.setItem("sk_who",w.value.trim()));
-  keepFocus(); loadBins();
+  (async()=>{
+    let role=null;
+    try{ role=await (await fetch("/api/role?key="+encodeURIComponent(KEY))).json(); }catch(e){}
+    if(role && role.ok){
+      CURRENT_USER = role.user || "";
+      $("appwrap").classList.remove("hidden");
+      $("whoName").textContent = CURRENT_USER;
+      if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
+      keepFocus(); loadBins();
+    } else {
+      try{ localStorage.removeItem("sk_key"); }catch(e){}
+      $("keygate").classList.remove("hidden");
+      const m=$("gateMsg"); if(m) m.textContent="That username isn't recognized — check spelling and try again.";
+    }
+  })();
 }
 
 /* ---------- tabs ---------- */
@@ -276,23 +307,43 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
     if(r.error){ toast(r.error,true); } else { toast(`Imported ${r.imported} + updated ${r.updated} (${r.with_location} located)`); loadBins(); }
   }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
 
-/* ---------- search tab: product NAME / SKU search across all stores ---------- */
-let searchT=null;
+/* ---------- search tab: product NAME / SKU search across all stores, with filters + sort ---------- */
+let searchT=null, findItems=[];
+function toggleChip(el){ el.classList.toggle("on"); renderFind(); }
 function doFind(){ clearTimeout(searchT); searchT=setTimeout(async()=>{
   const q=$("q").value.trim();
-  if(q.length<2){ $("searchres").innerHTML='<div class="muted center">Type a product name or SKU to search all stores.</div>'; return; }
+  if(q.length<2){ findItems=[]; $("searchres").innerHTML='<div class="muted center">Type a product name or SKU to search all stores.</div>'; return; }
   $("searchres").innerHTML='<div class="muted center">Searching…</div>';
-  try{ const d=await api("/api/find?q="+encodeURIComponent(q));
-    if(!d.items||!d.items.length){ $("searchres").innerHTML='<div class="muted center">No products match “'+esc(q)+'”.</div>'; return; }
-    $("searchres").innerHTML='<div class="muted" style="margin-bottom:8px">'+d.count+' result'+(d.count===1?"":"s")+'</div>'+
-      '<table><thead><tr><th>Item</th><th class="n">Qty</th><th>Bin</th></tr></thead><tbody>'+
-      d.items.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
-        <td><div>${esc(it.title||"")}</div><div class="muted" style="font-size:12px">${esc(it.brand)} · <span class="mono">${esc(it.sku||"—")}</span>${it.variant&&it.variant!==it.title?` · ${esc(it.variant)}`:""}</div></td>
-        <td class="n"><b>${it.qty==null?"—":it.qty}</b></td>
-        <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
-      '</tbody></table>';
-  }catch(e){ $("searchres").innerHTML='<div class="muted center">Search error.</div>'; }
+  try{ const d=await api("/api/find?q="+encodeURIComponent(q)); findItems=d.items||[]; renderFind(); }
+  catch(e){ $("searchres").innerHTML='<div class="muted center">Search error.</div>'; }
 },300); }
+function binKey(b){ return b? String(b).toLowerCase() : null; }
+function renderFind(){
+  if(!findItems.length){ const q=$("q").value.trim(); $("searchres").innerHTML='<div class="muted center">'+(q.length<2?"Type a product name or SKU to search all stores.":"No products match.")+'</div>'; return; }
+  // status filter (chips); if none selected, show all
+  const sel=[...document.querySelectorAll(".chip.on")].map(c=>c.dataset.st);
+  let rows = sel.length ? findItems.filter(it=> sel.includes(String(it.status||"").toUpperCase())) : findItems.slice();
+  // sort
+  const s=$("sort").value;
+  rows.sort((a,b)=>{
+    if(s==="qty_desc") return (b.qty??-1)-(a.qty??-1);
+    if(s==="qty_asc")  return (a.qty??Infinity)-(b.qty??Infinity);
+    // bin sorts — items without a bin always go last
+    const ka=binKey(a.bin), kb=binKey(b.bin);
+    if(ka===null&&kb===null) return 0; if(ka===null) return 1; if(kb===null) return -1;
+    const cmp = ka.localeCompare(kb, undefined, {numeric:true, sensitivity:"base"});
+    return s==="bin_desc" ? -cmp : cmp;
+  });
+  if(!rows.length){ $("searchres").innerHTML='<div class="muted center">No results match the current filters.</div>'; return; }
+  const total=findItems.length;
+  $("searchres").innerHTML='<div class="muted" style="margin-bottom:8px">'+rows.length+' of '+total+' shown</div>'+
+    '<table><thead><tr><th>Item</th><th class="n">Qty</th><th>Bin</th></tr></thead><tbody>'+
+    rows.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
+      <td><div>${esc(it.title||"")}</div><div class="muted" style="font-size:12px">${esc(it.brand)} · <span class="mono">${esc(it.sku||"—")}</span>${it.status&&String(it.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(it.status).toLowerCase()==="archived"?"inactive":String(it.status).toLowerCase())}`:""}</div></td>
+      <td class="n"><b>${it.qty==null?"—":it.qty}</b></td>
+      <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
+    '</tbody></table>';
+}
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
 function printLabel(code,label){
