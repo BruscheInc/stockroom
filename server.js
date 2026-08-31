@@ -125,6 +125,29 @@ async function shopifyFind({ sku, barcode }) {
   return results;
 }
 
+// Free-text NAME search across all stores — "milk chocolate" returns every product whose title matches,
+// expanded to its variants (each with SKU + qty). Bins are merged in by the caller.
+const PRODUCT_SEARCH_QUERY = `query($q:String!){ products(first:25, query:$q){ edges{ node{
+  title status featuredImage{ url }
+  variants(first:100){ edges{ node{ sku barcode displayName inventoryQuantity } } }
+}}}}`;
+async function shopifySearchByName(term) {
+  const rows = [];
+  await Promise.all(STORES.map(async (st) => {
+    try {
+      const d = await storeGraphQL(st, PRODUCT_SEARCH_QUERY, { q: term });
+      for (const pe of (d.products?.edges || [])) {
+        const p = pe.node;
+        for (const ve of (p.variants?.edges || [])) {
+          const v = ve.node;
+          rows.push({ brand: st.brand, sku: v.sku, barcode: v.barcode, title: p.title, variant: v.displayName, qty: v.inventoryQuantity, status: p.status, image: p.featuredImage?.url || null });
+        }
+      }
+    } catch (e) { /* skip a store that errors, keep the rest */ }
+  }));
+  return rows;
+}
+
 /* --------------------------------------- ShipStation (V1) --------------------------------------- */
 const SS_KEY = process.env.SHIPSTATION_API_KEY || "";
 const SS_SECRET = process.env.SHIPSTATION_API_SECRET || "";
@@ -181,8 +204,8 @@ async function moveItem({ sku, toBin, user, note, qtySeen, source }) {
     `INSERT INTO location_history (sku,from_bin,to_bin,qty_seen,user_name,source,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [sku, fromBin, toBin || null, qtySeen ?? null, user || null, source || "scan", note || null]
   );
-  // Ensure the target bin exists in the bins registry.
-  if (toBin) await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [toBin]);
+  // Register each bin token (locations can be compound, e.g. "1008-L, G-5").
+  if (toBin) await registerBinTokens(toBin);
   // Push to ShipStation (best-effort — never block the local move on it).
   let shipstation = { pushed: false };
   if (ssConfigured()) {
@@ -191,9 +214,65 @@ async function moveItem({ sku, toBin, user, note, qtySeen, source }) {
   }
   return { sku, from_bin: fromBin, to_bin: toBin || null, shipstation };
 }
+// A warehouse location can hold several comma-separated tokens ("1008-L, G-5"). Split into tokens.
+function binTokens(loc) { return String(loc || "").split(",").map((s) => s.trim()).filter(Boolean); }
+async function registerBinTokens(loc) {
+  for (const tok of binTokens(loc)) { try { await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [tok]); } catch {} }
+}
+// Items in a bin = any item whose location contains that bin as one of its comma-separated tokens.
 async function binItems(code) {
-  const r = await db(`SELECT sku,bin,title,barcode,updated_at,updated_by FROM item_location WHERE lower(bin)=lower($1) ORDER BY sku`, [code]);
+  const r = await db(
+    `SELECT sku,bin,title,barcode,updated_at,updated_by FROM item_location
+     WHERE lower($1) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(bin, ',')) x) ORDER BY sku`,
+    [code]
+  );
   return r.rows;
+}
+// Read-through: if we don't have a bin for a SKU yet, pull it live from ShipStation and cache it.
+async function readThroughBin(sku, title) {
+  if (!ssConfigured()) return null;
+  try {
+    const p = await ssFindProductBySku(sku);
+    const loc = p && String(p.warehouseLocation || "").trim();
+    if (loc) {
+      await db(
+        `INSERT INTO item_location (sku,bin,title,updated_at,updated_by) VALUES ($1,$2,$3,now(),'shipstation-read')
+         ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE(item_location.title,$3), updated_at=now(), updated_by='shipstation-read'`,
+        [sku, loc, title || null]
+      );
+      await registerBinTokens(loc);
+      return loc;
+    }
+  } catch {}
+  return null;
+}
+// Bulk import every product's warehouseLocation from ShipStation into the app DB.
+async function syncFromShipStation() {
+  if (!ssConfigured()) return { error: "ShipStation not configured" };
+  let page = 1, pages = 1, scanned = 0, imported = 0, updated = 0, withLoc = 0;
+  do {
+    const j = await ssReq("GET", `/products?page=${page}&pageSize=500`);
+    pages = j.pages || 1;
+    for (const p of (j.products || [])) {
+      scanned++;
+      const sku = p.sku; if (!sku) continue;
+      const loc = String(p.warehouseLocation || "").trim();
+      if (!loc) continue;
+      withLoc++;
+      const cur = await getItemLocation(sku);
+      if (cur && String(cur.bin || "") === loc) continue; // unchanged — idempotent re-sync
+      await db(
+        `INSERT INTO item_location (sku,bin,title,updated_at,updated_by) VALUES ($1,$2,$3,now(),'shipstation-import')
+         ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE(item_location.title,$3), updated_at=now(), updated_by='shipstation-import'`,
+        [sku, loc, p.name || null]
+      );
+      await registerBinTokens(loc);
+      await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source) VALUES ($1,$2,$3,'import','import')`, [sku, cur ? cur.bin : null, loc]);
+      if (cur) updated++; else imported++;
+    }
+    page++;
+  } while (page <= pages);
+  return { ok: true, scanned, with_location: withLoc, imported, updated };
 }
 
 // Resolve a scanned code → an item or a bin.
@@ -215,12 +294,14 @@ async function resolveCode(raw) {
   if (matches.length) {
     const sku = matches[0].sku;
     const loc = await getItemLocation(sku);
+    let currentBin = loc?.bin || null;
+    if (!currentBin) currentBin = await readThroughBin(sku, matches[0].title); // pull from ShipStation if not cached yet
     return {
       type: "item", matched_by: matchedBy, sku, title: matches[0].title, barcode: matches[0].barcode,
       image: matches.find((m) => m.image)?.image || null,
       stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
       total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
-      current_bin: loc?.bin || null, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
+      current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       history: await getHistory(sku, 15),
     };
   }
@@ -255,12 +336,14 @@ app.get("/api/item/:sku", async (req, res) => {
     const sku = req.params.sku;
     const matches = (await shopifyFind({ sku })).filter((m) => !m.error);
     const loc = await getItemLocation(sku);
+    let currentBin = loc?.bin || null;
+    if (!currentBin) currentBin = await readThroughBin(sku, matches[0]?.title);
     res.json({
       sku, title: matches[0]?.title || loc?.title || null, barcode: matches[0]?.barcode || loc?.barcode || null,
       image: matches.find((m) => m.image)?.image || null,
       stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
       total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
-      current_bin: loc?.bin || null, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
+      current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       history: await getHistory(sku, 50),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -292,11 +375,19 @@ app.post("/api/move", async (req, res) => {
 app.get("/api/bins", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const r = await db(`SELECT b.code, b.label, COUNT(il.sku)::int AS items
-      FROM bins b LEFT JOIN item_location il ON lower(il.bin)=lower(b.code)
-      GROUP BY b.code,b.label ORDER BY b.code`);
+    // Count items whose location contains each bin as a comma-separated token (handles "1008-L, G-5").
+    const r = await db(`SELECT b.code, b.label,
+      (SELECT COUNT(*) FROM item_location il
+        WHERE lower(b.code) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(il.bin, ',')) x))::int AS items
+      FROM bins b ORDER BY b.code`);
     res.json({ bins: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Import existing bin locations from ShipStation (warehouseLocation → app DB). Idempotent.
+app.post("/api/sync-shipstation", async (req, res) => {
+  if (!guard(req, res)) return;
+  try { res.json(await syncFromShipStation()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/bins", async (req, res) => {
   if (!guard(req, res)) return;
@@ -305,6 +396,21 @@ app.post("/api/bins", async (req, res) => {
     if (!code) return res.status(400).json({ error: "code required" });
     await db(`INSERT INTO bins (code,label) VALUES ($1,$2) ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label`, [code, label || code]);
     res.json({ ok: true, code, label: label || code });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Product NAME / SKU search across the whole Shopify catalog (all 3 stores), with current bins merged in.
+app.get("/api/find", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const term = String(req.query.q || "").trim();
+    if (term.length < 2) return res.json({ items: [], count: 0 });
+    let rows = await shopifySearchByName(term);
+    const skus = [...new Set(rows.map((r) => r.sku).filter(Boolean))];
+    const binBySku = {};
+    if (skus.length) { const b = await db(`SELECT sku,bin FROM item_location WHERE sku = ANY($1)`, [skus]); for (const r of b.rows) binBySku[r.sku] = r.bin; }
+    rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null }));
+    rows.sort((a, b) => (a.title || "").localeCompare(b.title || "") || (a.brand || "").localeCompare(b.brand || ""));
+    res.json({ items: rows, count: rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Simple search (SKU/title contains) over what we've located, for the browse view.
@@ -334,4 +440,12 @@ const PORT = process.env.PORT || 8080;
     try { await storeToken(st); console.log(`   ✅ ${st.brand}: Shopify token OK`); }
     catch (e) { console.error(`   ❌ ${st.brand}: Shopify token FAILED — ${e.message}`); }
   }
+  // First-run seeding: if we have no locations yet, import them from ShipStation in the background.
+  try {
+    const c = await db(`SELECT COUNT(*)::int AS n FROM item_location`);
+    if (c.rows[0].n === 0 && ssConfigured()) {
+      console.log("📥 item_location empty — importing existing bins from ShipStation…");
+      syncFromShipStation().then((r) => console.log(`📥 ShipStation import done: ${JSON.stringify(r)}`)).catch((e) => console.error("📥 import failed:", e.message));
+    } else { console.log(`📥 locations on hand: ${c.rows[0].n} (skipping auto-import)`); }
+  } catch (e) { console.error("auto-import check failed:", e.message); }
 })();
