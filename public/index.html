@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1220" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<title>Brusche Stockroom</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{ --bg:#0b1220; --panel:#121b2e; --panel2:#0e1626; --line:#20304a; --ink:#e8f0ff; --muted:#8ea3c4; --accent:#39d98a; --accent2:#49b6ff; --warn:#ffb454; --bad:#ff6b6b; --mono:ui-monospace,Menlo,Consolas,monospace }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-text-size-adjust:100%}
+  body{padding-bottom:76px}
+  header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#0d1728,#0b1220);border-bottom:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
+  header .logo{font-weight:800;letter-spacing:.02em}
+  header .logo b{color:var(--accent)}
+  header .who{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  header .who input{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 8px;width:96px;font-size:12px}
+  .wrap{max-width:720px;margin:0 auto;padding:14px 14px 0}
+  .scanbar{display:flex;gap:8px;margin-bottom:12px}
+  .scanbar input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px 14px;font-size:16px}
+  .scanbar input:focus{outline:2px solid var(--accent2);border-color:var(--accent2)}
+  button{font:inherit;cursor:pointer}
+  .btn{background:var(--accent);color:#052012;border:none;border-radius:12px;padding:0 16px;font-weight:700;font-size:15px}
+  .btn.sec{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+  .btn.blue{background:var(--accent2);color:#04121f}
+  .btn.ghost{background:transparent;color:var(--accent2);border:1px solid var(--line)}
+  .btn:active{transform:translateY(1px)}
+  .btn.wide{width:100%;padding:14px;border-radius:12px}
+  #reader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px;display:none;background:#000}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+  .muted{color:var(--muted)} .mono{font-family:var(--mono)}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .k{color:var(--muted);font-size:13px} .v{font-weight:600;text-align:right}
+  .title{font-size:19px;font-weight:800;line-height:1.2;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:13px}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
+  .pill.bin{background:rgba(73,182,255,.16);color:var(--accent2);border:1px solid rgba(73,182,255,.35)}
+  .pill.nobin{background:rgba(255,180,84,.14);color:var(--warn);border:1px solid rgba(255,180,84,.35)}
+  .itemhead{display:flex;gap:14px;align-items:center}
+  .itemhead img{width:64px;height:64px;border-radius:12px;object-fit:cover;background:var(--panel2);border:1px solid var(--line)}
+  .qtygrid{display:grid;grid-template-columns:1fr auto;gap:0;margin-top:6px}
+  .big{font-size:34px;font-weight:800;line-height:1}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .hist{font-size:13px}
+  .hist .h{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px dashed var(--line)}
+  .hist .h:last-child{border-bottom:none}
+  .arrow{color:var(--accent)}
+  .sectlabel{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 2px 6px}
+  .moverow{display:flex;gap:8px;margin-top:6px}
+  .moverow input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px}
+  .note{color:var(--muted);font-size:13px;text-align:center;margin:8px 0}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:88px;background:#08381f;color:#c9ffe4;border:1px solid #1c8a54;padding:10px 16px;border-radius:12px;font-size:14px;z-index:60;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1} .toast.bad{background:#3a1414;color:#ffd4d4;border-color:#8a1c1c}
+  nav.tabs{position:fixed;bottom:0;left:0;right:0;background:#0c1626;border-top:1px solid var(--line);display:flex;z-index:30;padding-bottom:env(safe-area-inset-bottom)}
+  nav.tabs button{flex:1;background:none;border:none;color:var(--muted);padding:11px 0 12px;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px}
+  nav.tabs button .i{font-size:19px}
+  nav.tabs button.on{color:var(--accent)}
+  .binlist a{display:flex;justify-content:space-between;align-items:center;padding:13px 4px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none}
+  .binlist a:last-child{border-bottom:none}
+  .hidden{display:none!important}
+  .center{text-align:center}
+  .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
+  .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
+  @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;inset:0;padding:24px;color:#000;background:#fff} }
+  #printArea{display:none}
+</style>
+</head>
+<body>
+
+<div id="keygate" class="keyprompt hidden">
+  <h2>Brusche Stockroom</h2>
+  <p class="muted">Enter your access key to continue.</p>
+  <input id="keyInput" placeholder="access key" autocomplete="off" />
+  <button class="btn wide" onclick="saveKey()">Enter</button>
+</div>
+
+<div id="appwrap" class="hidden">
+<header>
+  <div class="logo">📦 <b>Stockroom</b></div>
+  <div class="who">👤 <input id="who" placeholder="your name" autocomplete="off" /></div>
+</header>
+
+<div class="wrap">
+  <!-- SCAN TAB -->
+  <section id="tab-scan">
+    <div class="scanbar">
+      <input id="scan" placeholder="Scan or type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <button class="btn" onclick="submitScan()">Go</button>
+    </div>
+    <button class="btn blue wide" id="camBtn" onclick="toggleCamera()">📷 Scan with camera</button>
+    <div id="reader"></div>
+    <div class="note" id="scanNote">Point the camera at a barcode or QR, or use a scanner gun into the box above.</div>
+    <div id="result"></div>
+  </section>
+
+  <!-- BINS TAB -->
+  <section id="tab-bins" class="hidden">
+    <div class="scanbar">
+      <input id="newBin" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
+      <button class="btn" onclick="addBin()">Add</button>
+    </div>
+    <div class="sectlabel">Bins</div>
+    <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
+  </section>
+
+  <!-- SEARCH TAB -->
+  <section id="tab-search" class="hidden">
+    <div class="scanbar">
+      <input id="q" placeholder="Search located items (SKU or title)…" autocomplete="off" oninput="doSearch()" />
+    </div>
+    <div id="searchres" class="card"><div class="muted center">Type to search items you've located.</div></div>
+  </section>
+</div>
+
+<nav class="tabs">
+  <button id="nav-scan" class="on" onclick="showTab('scan')"><span class="i">🔍</span>Scan</button>
+  <button id="nav-bins" onclick="showTab('bins')"><span class="i">🗄️</span>Bins</button>
+  <button id="nav-search" onclick="showTab('search')"><span class="i">📋</span>Items</button>
+</nav>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="printArea"></div>
+
+<script>
+/* ---------- key / state ---------- */
+const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("key"); if(u){localStorage.setItem("sk_key",u);return u;} return localStorage.getItem("sk_key")||""; }catch(e){ return ""; } })();
+const $ = (id)=>document.getElementById(id);
+function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; localStorage.setItem("sk_key",v); location.href=location.pathname+"?key="+encodeURIComponent(v); }
+function whoName(){ return ($("who")&&$("who").value.trim())|| localStorage.getItem("sk_who") || ""; }
+const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2200); }
+async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("Unauthorized — check access key",true); throw new Error("401"); } return r.json(); }
+
+if(!KEY){ $("keygate").classList.remove("hidden"); }
+else {
+  $("appwrap").classList.remove("hidden");
+  if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
+  const w=$("who"); w.value=localStorage.getItem("sk_who")||""; w.addEventListener("change",()=>localStorage.setItem("sk_who",w.value.trim()));
+  keepFocus(); loadBins();
+}
+
+/* ---------- tabs ---------- */
+function showTab(t){
+  for(const x of ["scan","bins","search"]){ $("tab-"+x).classList.toggle("hidden",x!==t); $("nav-"+x).classList.toggle("on",x===t); }
+  if(t==="bins") loadBins();
+  if(t==="scan") setTimeout(keepFocus,50);
+}
+
+/* ---------- keyboard-wedge (scanner gun) ---------- */
+// The #scan box stays focused so a scanner gun types into it and its trailing Enter fires a lookup.
+function keepFocus(){ const s=$("scan"); if(!s) return; if(document.activeElement!==s && !$("tab-scan").classList.contains("hidden")) s.focus(); }
+document.addEventListener("click",(e)=>{ if(e.target.closest("input,button,a")) return; keepFocus(); });
+$("scan").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); submitScan(); } });
+async function submitScan(){ const code=$("scan").value.trim(); if(!code)return; $("scan").value=""; await lookup(code); }
+
+/* ---------- camera scanning ---------- */
+let html5qr=null, camOn=false;
+async function toggleCamera(){
+  if(camOn){ stopCamera(); return; }
+  $("reader").style.display="block"; $("camBtn").textContent="✕ Stop camera";
+  try{
+    html5qr = new Html5Qrcode("reader",{ verbose:false });
+    await html5qr.start({facingMode:"environment"}, { fps:12, qrbox:{width:260,height:180} },
+      (txt)=>{ navigator.vibrate&&navigator.vibrate(60); stopCamera(); lookup(txt.trim()); },
+      ()=>{});
+    camOn=true;
+  }catch(e){ $("scanNote").textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
+}
+function stopCamera(){ $("camBtn").textContent="📷 Scan with camera"; $("reader").style.display="none";
+  if(html5qr){ html5qr.stop().then(()=>html5qr.clear()).catch(()=>{}); } camOn=false; }
+
+/* ---------- lookup / render ---------- */
+async function lookup(code){
+  $("result").innerHTML='<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
+  showTab("scan");
+  let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); }catch(e){ return; }
+  if(d.type==="item") renderItem(d);
+  else if(d.type==="bin") renderBin(d);
+  else if(d.type==="unknown") renderUnknown(d);
+  else $("result").innerHTML='<div class="card center muted">Nothing scanned.</div>';
+}
+function storesRows(stores){
+  if(!stores||!stores.length) return '<tr><td class="muted" colspan="3">Not found in any store</td></tr>';
+  return stores.map(s=>`<tr><td>${esc(s.brand)}</td><td class="muted">${esc(s.status||"")}</td><td class="n"><b>${s.qty==null?"—":s.qty}</b></td></tr>`).join("");
+}
+function histRows(h){
+  if(!h||!h.length) return '<div class="muted">No location history yet.</div>';
+  return h.map(x=>`<div class="h"><span>${x.from_bin?`<span class="mono">${esc(x.from_bin)}</span>`:'<span class="muted">—</span>'} <span class="arrow">→</span> <span class="mono">${esc(x.to_bin||"—")}</span></span><span class="muted">${esc(x.user_name||"")} · ${fmt(x.ts)}</span></div>`).join("");
+}
+function fmt(ts){ try{ return new Date(ts).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ts; } }
+function renderItem(d){
+  const binPill = d.current_bin ? `<span class="pill bin">📍 ${esc(d.current_bin)}</span>` : `<span class="pill nobin">no bin set</span>`;
+  $("result").innerHTML=`
+    <div class="card">
+      <div class="itemhead">
+        ${d.image?`<img src="${esc(d.image)}" alt="">`:`<div style="width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center">📦</div>`}
+        <div style="flex:1;min-width:0">
+          <p class="title">${esc(d.title||d.sku)}</p>
+          <div class="sub mono">SKU ${esc(d.sku||"—")}${d.barcode?` · UPC ${esc(d.barcode)}`:""}</div>
+          <div style="margin-top:6px">${binPill}</div>
+        </div>
+      </div>
+      <div class="qtygrid"><div class="k" style="align-self:end">On hand (all stores)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
+      <table style="margin-top:10px"><thead><tr><th>Store</th><th>Status</th><th class="n">Qty</th></tr></thead><tbody>${storesRows(d.stores)}</tbody></table>
+    </div>
+    <div class="card">
+      <div class="sectlabel" style="margin-top:0">Set / move bin</div>
+      <div class="moverow">
+        <input id="moveBin" placeholder="Scan or type bin (e.g. A-01-3)" autocomplete="off" value="${esc(d.current_bin||"")}">
+        <button class="btn" onclick="doMove('${esc(d.sku)}')">Save</button>
+      </div>
+      <div class="moverow"><input id="moveNote" placeholder="Note (optional)" autocomplete="off"><input id="moveQty" inputmode="numeric" placeholder="Qty seen (optional)" style="max-width:130px"></div>
+      <div class="note">Saving updates the app + pushes the location to ShipStation.</div>
+    </div>
+    <div class="card">
+      <div class="sectlabel" style="margin-top:0">Location history</div>
+      <div class="hist" id="histbox">${histRows(d.history)}</div>
+    </div>`;
+}
+function renderBin(d){
+  const rows = (d.items&&d.items.length)? d.items.map(it=>`<tr><td class="mono">${esc(it.sku)}</td><td>${esc(it.title||"")}</td><td class="muted">${fmt(it.updated_at)}</td></tr>`).join("")
+    : '<tr><td colspan="3" class="muted">No items assigned to this bin yet.</td></tr>';
+  $("result").innerHTML=`
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="pill bin" style="font-size:15px">🗄️ ${esc(d.bin)}</span>
+        <div class="sub" style="flex:1">${esc(d.label||"")}</div>
+        <button class="btn sec" onclick="printLabel('${esc(d.bin)}','${esc(d.label||"")}')">🖨️ Label</button>
+      </div>
+      <table style="margin-top:12px"><thead><tr><th>SKU</th><th>Item</th><th>Updated</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+function renderUnknown(d){
+  $("result").innerHTML=`<div class="card center">
+    <p class="title">Unknown code</p>
+    <div class="sub mono">${esc(d.code)}</div>
+    <p class="muted">Not found as a SKU, barcode, or bin. If this is a SKU, you can still assign it a bin below.</p>
+    <div class="moverow"><input id="moveBin" placeholder="Bin code" autocomplete="off"><button class="btn" onclick="doMove('${esc(d.code)}')">Assign</button></div>
+  </div>`;
+}
+async function doMove(sku){
+  const bin=$("moveBin").value.trim(); if(!bin){ toast("Enter a bin",true); return; }
+  const note=($("moveNote")&&$("moveNote").value.trim())||""; const qty=($("moveQty")&&$("moveQty").value.trim())||"";
+  try{
+    const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,toBin:bin,user:whoName(),note,qtySeen:qty?Number(qty):null})});
+    if(r.error){ toast(r.error,true); return; }
+    let msg=`Saved → ${bin}`; if(r.shipstation&&r.shipstation.pushed) msg+=" · ShipStation ✓"; else if(r.shipstation&&r.shipstation.error) msg+=" · ShipStation ✕";
+    toast(msg, !!(r.shipstation&&r.shipstation.error));
+    lookup(sku);
+  }catch(e){ toast("Save failed",true); }
+}
+
+/* ---------- bins tab ---------- */
+async function loadBins(){
+  try{ const d=await api("/api/bins"); const el=$("binlist");
+    if(!d.bins||!d.bins.length){ el.innerHTML='<div class="muted center">No bins yet. Add one above.</div>'; return; }
+    el.innerHTML=d.bins.map(b=>`<a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')"><span><span class="mono">${esc(b.code)}</span> <span class="muted">${esc(b.label&&b.label!==b.code?b.label:"")}</span></span><span class="muted">${b.items} item${b.items===1?"":"s"} ›</span></a>`).join("");
+  }catch(e){}
+}
+async function addBin(){ const code=$("newBin").value.trim(); if(!code)return; try{ await api("/api/bins",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,code})}); $("newBin").value=""; toast("Bin added"); loadBins(); }catch(e){} }
+
+/* ---------- search tab ---------- */
+let searchT=null;
+function doSearch(){ clearTimeout(searchT); searchT=setTimeout(async()=>{
+  const q=$("q").value.trim(); if(!q){ $("searchres").innerHTML='<div class="muted center">Type to search items you\'ve located.</div>'; return; }
+  try{ const d=await api("/api/search?q="+encodeURIComponent(q));
+    $("searchres").innerHTML=(d.items&&d.items.length)? '<table><thead><tr><th>SKU</th><th>Item</th><th>Bin</th></tr></thead><tbody>'+d.items.map(it=>`<tr onclick="lookup('${esc(it.sku)}')" style="cursor:pointer"><td class="mono">${esc(it.sku)}</td><td>${esc(it.title||"")}</td><td class="mono">${esc(it.bin||"—")}</td></tr>`).join("")+'</tbody></table>' : '<div class="muted center">No located items match.</div>';
+  }catch(e){}
+},250); }
+
+/* ---------- print bin label (QR encodes BIN-<code>) ---------- */
+function printLabel(code,label){
+  const pa=$("printArea"); pa.innerHTML=`<div style="text-align:center;font-family:sans-serif">
+    <div id="qrbox" style="display:inline-block;margin:20px auto"></div>
+    <div style="font-size:40px;font-weight:800;font-family:monospace;letter-spacing:2px">${esc(code)}</div>
+    <div style="font-size:20px;color:#333;margin-top:6px">${esc(label||"")}</div>
+    <div style="font-size:13px;color:#888;margin-top:10px">Brusche Stockroom</div></div>`;
+  pa.style.display="block";
+  $("qrbox").innerHTML=""; new QRCode($("qrbox"),{ text:"BIN-"+code, width:220, height:220, correctLevel:QRCode.CorrectLevel.M });
+  setTimeout(()=>{ window.print(); pa.style.display="none"; }, 300);
+}
+</script>
+</body>
+</html>
