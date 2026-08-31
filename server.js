@@ -271,6 +271,7 @@ async function syncFromShipStation() {
       if (cur) updated++; else imported++;
     }
     page++;
+    if (page <= pages) await new Promise((r) => setTimeout(r, 250)); // stay under ShipStation's 40 req/min
   } while (page <= pages);
   return { ok: true, scanned, with_location: withLoc, imported, updated };
 }
@@ -440,12 +441,13 @@ const PORT = process.env.PORT || 8080;
     try { await storeToken(st); console.log(`   ✅ ${st.brand}: Shopify token OK`); }
     catch (e) { console.error(`   ❌ ${st.brand}: Shopify token FAILED — ${e.message}`); }
   }
-  // First-run seeding: if we have no locations yet, import them from ShipStation in the background.
-  try {
-    const c = await db(`SELECT COUNT(*)::int AS n FROM item_location`);
-    if (c.rows[0].n === 0 && ssConfigured()) {
-      console.log("📥 item_location empty — importing existing bins from ShipStation…");
-      syncFromShipStation().then((r) => console.log(`📥 ShipStation import done: ${JSON.stringify(r)}`)).catch((e) => console.error("📥 import failed:", e.message));
-    } else { console.log(`📥 locations on hand: ${c.rows[0].n} (skipping auto-import)`); }
-  } catch (e) { console.error("auto-import check failed:", e.message); }
+  // Keep the app's bins mirrored from ShipStation: sync on every boot (background) and every 6 hours.
+  if (ssConfigured()) {
+    const runSync = (tag) => syncFromShipStation()
+      .then((r) => console.log(`📥 ShipStation sync (${tag}): ${JSON.stringify(r)}`))
+      .catch((e) => console.error(`📥 sync failed (${tag}):`, e.message));
+    console.log("📥 syncing bins from ShipStation on boot…");
+    runSync("boot");
+    setInterval(() => runSync("6h"), 6 * 60 * 60 * 1000);
+  }
 })();
