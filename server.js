@@ -210,31 +210,44 @@ async function getHistory(sku, limit = 25) {
   const r = await db(`SELECT id,from_bin,to_bin,qty_seen,user_name,source,note,ts FROM location_history WHERE sku=$1 ORDER BY ts DESC LIMIT $2`, [sku, limit]);
   return r.rows;
 }
-async function moveItem({ sku, toBin, user, note, qtySeen, source }) {
+// Set/add/remove an item's bin. Pass ONE of: toBin (replace whole location), addBin (add a token),
+// removeBin (drop a token). Locations can be compound, e.g. "1008-L, G-5".
+async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, source }) {
   if (!sku) throw new Error("sku required");
   const cur = await getItemLocation(sku);
   const fromBin = cur ? cur.bin : null;
+  // Compute the new location string based on the operation.
+  let finalBin;
+  const toks = binTokens(fromBin);
+  if (addBin) {
+    if (!toks.some((t) => t.toLowerCase() === String(addBin).toLowerCase())) toks.push(String(addBin).trim());
+    finalBin = toks.join(", ");
+  } else if (removeBin) {
+    finalBin = toks.filter((t) => t.toLowerCase() !== String(removeBin).toLowerCase()).join(", ");
+  } else {
+    finalBin = (toBin || "").trim();
+  }
+  finalBin = finalBin || null;
   // enrich title/barcode from Shopify (best-effort) so the DB row is self-describing
   let title = cur?.title || null, barcode = cur?.barcode || null;
   try { const f = (await shopifyFind({ sku }))[0]; if (f && !f.error) { title = f.title || title; barcode = f.barcode || barcode; } } catch {}
   await db(
     `INSERT INTO item_location (sku,bin,title,barcode,updated_at,updated_by) VALUES ($1,$2,$3,$4,now(),$5)
      ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE($3,item_location.title), barcode=COALESCE($4,item_location.barcode), updated_at=now(), updated_by=$5`,
-    [sku, toBin || null, title, barcode, user || null]
+    [sku, finalBin, title, barcode, user || null]
   );
   await db(
     `INSERT INTO location_history (sku,from_bin,to_bin,qty_seen,user_name,source,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [sku, fromBin, toBin || null, qtySeen ?? null, user || null, source || "scan", note || null]
+    [sku, fromBin, finalBin, qtySeen ?? null, user || null, source || "scan", note || null]
   );
-  // Register each bin token (locations can be compound, e.g. "1008-L, G-5").
-  if (toBin) await registerBinTokens(toBin);
+  if (finalBin) await registerBinTokens(finalBin);
   // Push to ShipStation (best-effort — never block the local move on it).
   let shipstation = { pushed: false };
   if (ssConfigured()) {
-    try { const r = await ssSetWarehouseLocation(sku, toBin || ""); shipstation = { pushed: true, ...r }; }
+    try { const r = await ssSetWarehouseLocation(sku, finalBin || ""); shipstation = { pushed: true, ...r }; }
     catch (e) { shipstation = { pushed: false, error: e.message }; }
   }
-  return { sku, from_bin: fromBin, to_bin: toBin || null, shipstation };
+  return { sku, from_bin: fromBin, to_bin: finalBin, shipstation };
 }
 // A warehouse location can hold several comma-separated tokens ("1008-L, G-5"). Split into tokens.
 function binTokens(loc) { return String(loc || "").split(",").map((s) => s.trim()).filter(Boolean); }
@@ -390,10 +403,10 @@ app.get("/api/history/:sku", async (req, res) => {
 app.post("/api/move", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const { sku, toBin, note, qtySeen } = req.body || {};
+    const { sku, toBin, addBin, removeBin, note, qtySeen } = req.body || {};
     if (!sku) return res.status(400).json({ error: "sku required" });
     // Actor is derived from the login key, not the client — so history always reflects who is signed in.
-    res.json(await moveItem({ sku, toBin, user: actorOf(req), note, qtySeen, source: "scan" }));
+    res.json(await moveItem({ sku, toBin, addBin, removeBin, user: actorOf(req), note, qtySeen, source: "scan" }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Bins registry.
