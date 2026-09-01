@@ -1,5 +1,5 @@
 // Stockroom service worker — cache the app shell, always hit the network for /api/ (live data).
-const CACHE = "stockroom-v4";
+const CACHE = "stockroom-v5";
 const SHELL = ["./","./index.html","./manifest.webmanifest"];
 self.addEventListener("install",(e)=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()).catch(()=>{})); });
 self.addEventListener("activate",(e)=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())); });

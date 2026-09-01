@@ -274,17 +274,48 @@ function renderItem(d){
 }
 function renderBin(d){
   currentView={kind:"bin",key:d.bin}; // keep this bin view live
-  const rows = (d.items&&d.items.length)? d.items.map(it=>`<tr><td class="mono">${esc(it.sku)}</td><td>${esc(it.title||"")}</td><td class="muted">${fmt(it.updated_at)}</td></tr>`).join("")
-    : '<tr><td colspan="3" class="muted">No items assigned to this bin yet.</td></tr>';
+  const b=esc(d.bin);
+  const rows = (d.items&&d.items.length)? d.items.map(it=>`<tr>
+      <td onclick="lookup('${esc(it.sku)}')" style="cursor:pointer"><div class="mono">${esc(it.sku)}</div><div class="muted" style="font-size:12px">${esc(it.title||"")}</div></td>
+      <td class="n"><button class="btn ghost" style="padding:6px 12px" onclick="removeFromBin('${esc(it.sku)}','${b}')">Remove</button></td>
+    </tr>`).join("")
+    : '<tr><td colspan="2" class="muted">No items in this bin yet — add one below.</td></tr>';
   $("result").innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px">
-        <span class="pill bin" style="font-size:15px">🗄️ ${esc(d.bin)}</span>
-        <div class="sub" style="flex:1">${esc(d.label||"")}</div>
-        <button class="btn sec" onclick="printLabel('${esc(d.bin)}','${esc(d.label||"")}')">🖨️ Label</button>
+        <span class="pill bin" style="font-size:15px">🗄️ ${b}</span>
+        <div class="sub" style="flex:1">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
+        <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')">🖨️ Label</button>
       </div>
-      <table style="margin-top:12px"><thead><tr><th>SKU</th><th>Item</th><th>Updated</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
+      <div class="moverow">
+        <input id="binAdd" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
+          onkeydown="if(event.key==='Enter')addToBin('${b}')">
+        <button class="btn" onclick="addToBin('${b}')">Add</button>
+      </div>
+      <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
+}
+function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error) renderBin(d); }).catch(()=>{}); }
+async function addToBin(bin){
+  const code=$("binAdd").value.trim(); if(!code)return; $("binAdd").value="";
+  // resolve the scanned code to a SKU (handles UPC or SKU)
+  let sku=code;
+  try{ const r=await api("/api/resolve?code="+encodeURIComponent(code));
+    if(r.type==="item"&&r.sku){ sku=r.sku; } else { toast("Not a known item: "+code,true); return; }
+  }catch(e){ return; }
+  try{ const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,addBin:bin})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Added ${sku} → ${bin}${r.shipstation&&r.shipstation.pushed?" · SS ✓":""}`, !!(r.shipstation&&r.shipstation.error));
+    reloadBin(bin);
+  }catch(e){ toast("Add failed",true); }
+}
+async function removeFromBin(sku,bin){
+  try{ const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,removeBin:bin})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Removed ${sku} from ${bin}${r.shipstation&&r.shipstation.pushed?" · SS ✓":""}`, !!(r.shipstation&&r.shipstation.error));
+    reloadBin(bin);
+  }catch(e){ toast("Remove failed",true); }
 }
 function renderUnknown(d){
   currentView=null;
@@ -311,10 +342,10 @@ async function doMove(sku){
 // Silent background refresh of whatever shared view is open.
 function liveRefresh(){
   if(document.hidden) return;
+  const ae=document.activeElement;
+  if(ae && ae.closest && ae.closest("#result")) return; // don't clobber someone typing in the open view
   if(!$("tab-bins").classList.contains("hidden")){ loadBins(); return; }
-  if(!$("tab-scan").classList.contains("hidden") && currentView && currentView.kind==="bin"){
-    api("/api/bin/"+encodeURIComponent(currentView.key)).then(d=>{ if(d && !d.error) renderBin(d); }).catch(()=>{});
-  }
+  if(!$("tab-scan").classList.contains("hidden") && currentView && currentView.kind==="bin"){ reloadBin(currentView.key); }
 }
 // The Refresh button: reload whatever the user is currently looking at, with feedback.
 function refreshNow(){
