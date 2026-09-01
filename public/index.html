@@ -207,17 +207,21 @@ async function submitScan(){ const code=$("scan").value.trim(); if(!code)return;
 
 /* ---------- camera scanning ---------- */
 let html5qr=null, camOn=false;
-async function toggleCamera(){
-  if(camOn){ stopCamera(); return; }
+// Start the camera; on a successful scan, run onDetect(code). Used by the main scanner AND the bin "add" box.
+async function startCamera(onDetect){
+  if(camOn) stopCamera();
   $("reader").style.display="block"; $("camBtn").textContent="✕ Stop camera";
+  try{ $("reader").scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
   try{
     html5qr = new Html5Qrcode("reader",{ verbose:false });
     await html5qr.start({facingMode:"environment"}, { fps:12, qrbox:{width:260,height:180} },
-      (txt)=>{ navigator.vibrate&&navigator.vibrate(60); stopCamera(); lookup(txt.trim()); },
+      (txt)=>{ navigator.vibrate&&navigator.vibrate(60); stopCamera(); onDetect(txt.trim()); },
       ()=>{});
     camOn=true;
   }catch(e){ $("scanNote").textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
 }
+function toggleCamera(){ if(camOn){ stopCamera(); return; } startCamera(lookup); }
+function scanIntoBin(bin){ startCamera((code)=>addToBinCode(bin, code)); }
 function stopCamera(){ $("camBtn").textContent="📷 Scan with camera"; $("reader").style.display="none";
   if(html5qr){ html5qr.stop().then(()=>html5qr.clear()).catch(()=>{}); } camOn=false; }
 
@@ -291,15 +295,17 @@ function renderBin(d){
       <div class="moverow">
         <input id="binAdd" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
           onkeydown="if(event.key==='Enter')addToBin('${b}')">
+        <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera">📷</button>
         <button class="btn" onclick="addToBin('${b}')">Add</button>
       </div>
       <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error) renderBin(d); }).catch(()=>{}); }
-async function addToBin(bin){
-  const code=$("binAdd").value.trim(); if(!code)return; $("binAdd").value="";
-  // resolve the scanned code to a SKU (handles UPC or SKU)
+function addToBin(bin){ const code=$("binAdd")?$("binAdd").value.trim():""; if(code)$("binAdd").value=""; addToBinCode(bin, code); }
+async function addToBinCode(bin, code){
+  code=(code||"").trim(); if(!code) return;
+  // resolve the scanned/typed code to a SKU (handles UPC or SKU)
   let sku=code;
   try{ const r=await api("/api/resolve?code="+encodeURIComponent(code));
     if(r.type==="item"&&r.sku){ sku=r.sku; } else { toast("Not a known item: "+code,true); return; }
