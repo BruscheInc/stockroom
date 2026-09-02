@@ -80,8 +80,13 @@
   .binchip button{background:rgba(255,107,107,.18);border:1px solid rgba(255,107,107,.5);color:#ffb0b0;border-radius:50%;width:24px;height:24px;line-height:1;font-size:13px;padding:0;display:flex;align-items:center;justify-content:center}
   .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
   .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
-  @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;inset:0;padding:24px;color:#000;background:#fff} }
   #printArea{display:none}
+  @media print{
+    html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body>*{display:none !important}
+    #printArea{display:block !important;position:static;padding:24px;color:#000;background:#fff}
+    #printArea *{color:#000}
+  }
 </style>
 </head>
 <body>
@@ -120,6 +125,7 @@
       <button class="btn" onclick="addBin()">Add</button>
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
+    <input id="binFilter" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
   </section>
@@ -398,11 +404,19 @@ function refreshNow(){
 }
 
 /* ---------- bins tab ---------- */
+let allBins=[];
 async function loadBins(){
-  try{ const d=await api("/api/bins"); const el=$("binlist");
-    if(!d.bins||!d.bins.length){ el.innerHTML='<div class="muted center">No bins yet. Add one above.</div>'; return; }
-    el.innerHTML=d.bins.map(b=>`<a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')"><span><span class="mono">${esc(b.code)}</span> <span class="muted">${esc(b.label&&b.label!==b.code?b.label:"")}</span></span><span class="muted">${b.items} item${b.items===1?"":"s"} ›</span></a>`).join("");
-  }catch(e){}
+  try{ const d=await api("/api/bins"); allBins=d.bins||[]; renderBinList(); }
+  catch(e){ $("binlist").innerHTML='<div class="muted center">Couldn\'t load bins — pull to refresh.</div>'; }
+}
+function renderBinList(){
+  const el=$("binlist"); if(!el) return;
+  const q=($("binFilter")&&$("binFilter").value.trim().toLowerCase())||"";
+  let list=allBins; if(q) list=allBins.filter(b=>String(b.code).toLowerCase().includes(q)||String(b.label||"").toLowerCase().includes(q));
+  if(!list.length){ el.innerHTML='<div class="muted center">'+(allBins.length?'No bins match “'+esc(q)+'”.':'No bins yet — add one above or run the ShipStation import.')+'</div>'; return; }
+  const shown=list.slice(0,300);
+  el.innerHTML=shown.map(b=>`<a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')"><span><span class="mono">${esc(b.code)}</span> <span class="muted">${esc(b.label&&b.label!==b.code?b.label:"")}</span></span><span class="muted">${b.items} item${b.items===1?"":"s"} ›</span></a>`).join("")
+    + (list.length>300?`<div class="muted center" style="padding:12px">Showing 300 of ${list.length} — type in the filter to narrow down.</div>`:"");
 }
 async function addBin(){ const code=$("newBin").value.trim(); if(!code)return; try{ await api("/api/bins",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,code})}); $("newBin").value=""; toast("Bin added"); loadBins(); }catch(e){} }
 async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textContent="⏳ Importing…"; b.disabled=true;
@@ -450,14 +464,14 @@ function renderFind(){
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
 function printLabel(code,label){
-  const pa=$("printArea"); pa.innerHTML=`<div style="text-align:center;font-family:sans-serif">
-    <div id="qrbox" style="display:inline-block;margin:20px auto"></div>
-    <div style="font-size:40px;font-weight:800;font-family:monospace;letter-spacing:2px">${esc(code)}</div>
+  const pa=$("printArea"); pa.innerHTML=`<div style="text-align:center;font-family:sans-serif;background:#fff;color:#000">
+    <div id="qrbox" style="display:inline-block;margin:20px auto;background:#fff"></div>
+    <div style="font-size:40px;font-weight:800;font-family:monospace;letter-spacing:2px;color:#000">${esc(code)}</div>
     <div style="font-size:20px;color:#333;margin-top:6px">${esc(label||"")}</div>
     <div style="font-size:13px;color:#888;margin-top:10px">Brusche Stockroom</div></div>`;
   pa.style.display="block";
-  $("qrbox").innerHTML=""; new QRCode($("qrbox"),{ text:"BIN-"+code, width:220, height:220, correctLevel:QRCode.CorrectLevel.M });
-  setTimeout(()=>{ window.print(); pa.style.display="none"; }, 300);
+  $("qrbox").innerHTML=""; new QRCode($("qrbox"),{ text:"BIN-"+code, width:220, height:220, colorDark:"#000000", colorLight:"#ffffff", correctLevel:QRCode.CorrectLevel.M });
+  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; }, 800); }, 500);
 }
 </script>
 </body>
