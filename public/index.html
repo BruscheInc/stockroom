@@ -75,6 +75,9 @@
   .chip{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 13px;font-size:13px;font-weight:600}
   .chip.on{background:rgba(57,217,138,.16);border-color:var(--accent);color:var(--accent)}
   #sort{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:13px}
+  .chipwrap{display:flex;flex-wrap:wrap;gap:8px}
+  .binchip{display:inline-flex;align-items:center;gap:9px;background:rgba(73,182,255,.14);border:1px solid rgba(73,182,255,.4);color:var(--accent2);border-radius:999px;padding:9px 10px 9px 14px;font-family:var(--mono);font-size:15px;font-weight:700}
+  .binchip button{background:rgba(255,107,107,.18);border:1px solid rgba(255,107,107,.5);color:#ffb0b0;border-radius:50%;width:24px;height:24px;line-height:1;font-size:13px;padding:0;display:flex;align-items:center;justify-content:center}
   .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
   .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
   @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;inset:0;padding:24px;color:#000;background:#fff} }
@@ -163,6 +166,7 @@ let CURRENT_USER="";
 function whoName(){ return CURRENT_USER; }
 let currentView=null; // {kind:'bin',key} — drives live auto-refresh of shared views
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tokens=(loc)=>String(loc||"").split(",").map(s=>s.trim()).filter(Boolean);
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2200); }
 async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("Unauthorized — check access key",true); throw new Error("401"); } return r.json(); }
 
@@ -248,7 +252,9 @@ function histRows(h){
 function fmt(ts){ try{ return new Date(ts).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ts; } }
 function renderItem(d){
   currentView=null; // item views aren't auto-refreshed (avoids clobbering a move in progress)
-  const binPill = d.current_bin ? `<span class="pill bin">📍 ${esc(d.current_bin)}</span>` : `<span class="pill nobin">no bin set</span>`;
+  const bins = tokens(d.current_bin);
+  const chips = bins.length ? bins.map(bn=>`<span class="binchip">📍 ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin">✕</button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
+  const binPill = bins.length ? `<span class="pill bin">📍 ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
   $("result").innerHTML=`
     <div class="card">
       <div class="itemhead">
@@ -263,13 +269,14 @@ function renderItem(d){
       <table style="margin-top:10px"><thead><tr><th>Store</th><th>Status</th><th class="n">Qty</th></tr></thead><tbody>${storesRows(d.stores)}</tbody></table>
     </div>
     <div class="card">
-      <div class="sectlabel" style="margin-top:0">Set / move bin</div>
-      <div class="moverow">
-        <input id="moveBin" placeholder="Scan or type bin (e.g. A-01-3)" autocomplete="off" value="${esc(d.current_bin||"")}">
-        <button class="btn" onclick="doMove('${esc(d.sku)}')">Save</button>
-      </div>
-      <div class="moverow"><input id="moveNote" placeholder="Note (optional)" autocomplete="off"><input id="moveQty" inputmode="numeric" placeholder="Qty seen (optional)" style="max-width:130px"></div>
-      <div class="note">Saving updates the app + pushes the location to ShipStation.</div>
+      <div class="sectlabel" style="margin-top:0">Bins (${bins.length}/3)</div>
+      <div class="chipwrap">${chips}</div>
+      ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
+          <input id="assignBin" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
+          <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label">📷</button>
+          <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
+        </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
+        : `<div class="note">Max 3 bins — remove one (✕) to add another.</div>`}
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Location history</div>
@@ -289,6 +296,7 @@ function renderBin(d){
       <div style="display:flex;align-items:center;gap:10px">
         <span class="pill bin" style="font-size:15px">🗄️ ${b}</span>
         <div class="sub" style="flex:1">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
+        <button class="btn ghost" onclick="clearBin('${b}')">Remove all</button>
         <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')">🖨️ Label</button>
       </div>
       <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
@@ -302,6 +310,32 @@ function renderBin(d){
     </div>`;
 }
 function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error) renderBin(d); }).catch(()=>{}); }
+// ---- item view: assign / remove bins (max 3 per SKU) ----
+async function removeFromItem(sku, bin){
+  try{ const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,removeBin:bin})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Removed ${bin}${r.shipstation&&r.shipstation.pushed?" · SS ✓":""}`, !!(r.shipstation&&r.shipstation.error));
+    lookup(sku);
+  }catch(e){ toast("Failed",true); }
+}
+async function addItemBinCode(sku, bin){
+  bin=(bin||"").trim(); if(!bin) return;
+  try{ const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,addBin:bin})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Assigned ${bin}${r.shipstation&&r.shipstation.pushed?" · SS ✓":""}`, !!(r.shipstation&&r.shipstation.error));
+    lookup(sku);
+  }catch(e){ toast("Failed",true); }
+}
+function assignItemBin(sku){ const v=$("assignBin")?$("assignBin").value.trim():""; if($("assignBin"))$("assignBin").value=""; addItemBinCode(sku, v); }
+function scanBinForItem(sku){ startCamera((code)=>addItemBinCode(sku, code.replace(/^BIN[-:]/i,""))); }
+// ---- bin view: remove all ----
+async function clearBin(bin){
+  if(!confirm(`Remove ALL items from ${bin}? This empties the bin (each item keeps any other bins).`)) return;
+  try{ const r=await api("/api/bin-clear",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,bin})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Cleared ${r.cleared} item(s) from ${bin}`); reloadBin(bin);
+  }catch(e){ toast("Failed",true); }
+}
 function addToBin(bin){ const code=$("binAdd")?$("binAdd").value.trim():""; if(code)$("binAdd").value=""; addToBinCode(bin, code); }
 async function addToBinCode(bin, code){
   code=(code||"").trim(); if(!code) return;
