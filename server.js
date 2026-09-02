@@ -221,6 +221,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   const toks = binTokens(fromBin);
   if (addBin) {
     if (!toks.some((t) => t.toLowerCase() === String(addBin).toLowerCase())) toks.push(String(addBin).trim());
+    if (toks.length > 3) { const e = new Error("Max 3 bins per SKU — remove one before adding another."); e.code = "MAX_BINS"; throw e; }
     finalBin = toks.join(", ");
   } else if (removeBin) {
     finalBin = toks.filter((t) => t.toLowerCase() !== String(removeBin).toLowerCase()).join(", ");
@@ -407,6 +408,21 @@ app.post("/api/move", async (req, res) => {
     if (!sku) return res.status(400).json({ error: "sku required" });
     // Actor is derived from the login key, not the client — so history always reflects who is signed in.
     res.json(await moveItem({ sku, toBin, addBin, removeBin, user: actorOf(req), note, qtySeen, source: "scan" }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Remove a bin from EVERY item that has it (clear the whole bin).
+app.post("/api/bin-clear", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const bin = (req.body && req.body.bin) || "";
+    if (!bin) return res.status(400).json({ error: "bin required" });
+    const items = await binItems(bin);
+    let cleared = 0, ssFailed = 0;
+    for (const it of items) {
+      try { const r = await moveItem({ sku: it.sku, removeBin: bin, user: actorOf(req), source: "scan" }); cleared++; if (r.shipstation && r.shipstation.error) ssFailed++; }
+      catch (e) { /* skip a single failure, keep clearing */ }
+    }
+    res.json({ ok: true, cleared, ss_failed: ssFailed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Bins registry.
