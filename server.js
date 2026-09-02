@@ -429,11 +429,18 @@ app.post("/api/bin-clear", async (req, res) => {
 app.get("/api/bins", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    // Count items whose location contains each bin as a comma-separated token (handles "1008-L, G-5").
-    const r = await db(`SELECT b.code, b.label,
-      (SELECT COUNT(*) FROM item_location il
-        WHERE lower(b.code) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(il.bin, ',')) x))::int AS items
-      FROM bins b ORDER BY b.code`);
+    // Single-pass count: expand every item's location into tokens ONCE, group, then join to bins.
+    // (The old per-bin correlated subquery was O(bins×items) and timed out on a full catalog.)
+    const r = await db(`
+      WITH toks AS (
+        SELECT trim(lower(x)) AS code FROM item_location, unnest(string_to_array(bin, ',')) AS x
+        WHERE bin IS NOT NULL AND bin <> ''
+      ), counts AS (
+        SELECT code, COUNT(*)::int AS items FROM toks WHERE code <> '' GROUP BY code
+      )
+      SELECT b.code, b.label, COALESCE(c.items, 0) AS items
+      FROM bins b LEFT JOIN counts c ON lower(b.code) = c.code
+      ORDER BY b.code`);
     res.json({ bins: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
