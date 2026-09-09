@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0b1220" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
@@ -213,12 +213,16 @@
         <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
       </div>
       <div class="vrow">
-        <label>On hand ≤</label><input id="vqty" type="number" min="0" placeholder="any" inputmode="numeric" oninput="debouncedStock()">
-        <label style="margin-left:auto">Brand</label>
-        <select id="vbrand" onchange="loadStockList()"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
+        <label>On hand</label>
+        <input id="vqtymin" type="number" min="0" value="1" inputmode="numeric" title="Minimum" oninput="debouncedStock()" style="width:66px">
+        <span style="color:var(--muted)">to</span>
+        <input id="vqty" type="number" min="0" value="3" inputmode="numeric" title="Maximum" oninput="debouncedStock()" style="width:66px">
+        <select id="vstatus" onchange="loadStockList()" style="margin-left:auto"><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="ARCHIVED">Disabled</option><option value="ALL">All statuses</option></select>
       </div>
       <div class="vrow">
-        <label>Verified</label>
+        <label>Brand</label>
+        <select id="vbrand" onchange="loadStockList()"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
+        <label style="margin-left:auto">Verified</label>
         <select id="vop" onchange="loadStockList()"><option value="any">Any</option><option value="never">Never</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
         <input id="vdate" type="date" onchange="loadStockList()">
       </div>
@@ -688,7 +692,9 @@ function fmtD(ts){ try{ return new Date(ts).toLocaleDateString([],{month:"short"
 function stockParams(){
   const p=new URLSearchParams();
   const q=$("vq").value.trim(); if(q)p.set("q",q);
+  const mn=$("vqtymin").value.trim(); if(mn!=="")p.set("qtyMin",mn);
   const qty=$("vqty").value.trim(); if(qty!=="")p.set("qtyMax",qty);
+  const status=$("vstatus").value; if(status)p.set("status",status);
   const brand=$("vbrand").value; if(brand)p.set("brand",brand);
   const vop=$("vop").value; if(vop&&vop!=="any")p.set("vop",vop);
   const vdate=$("vdate").value; if(vdate&&["before","after","on"].includes(vop))p.set("vdate",vdate);
@@ -715,7 +721,7 @@ async function loadStockList(){
     el.innerHTML=items.map(renderStockRow).join("")+(items.length>=d.limit?`<div class="muted center" style="padding:10px">Showing first ${d.limit} — narrow with filters.</div>`:"");
   }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load — is the inventory synced yet? Tap 📊 Sync.</div>'; }
 }
-function clearStockFilters(){ $("vq").value="";$("vqty").value="";$("vbrand").value="";$("vop").value="any";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
+function clearStockFilters(){ $("vq").value="";$("vqtymin").value="";$("vqty").value="";$("vstatus").value="ALL";$("vbrand").value="";$("vop").value="any";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
 function renderStockRow(it){
   const oh=it.on_hand; const ohc=oh===0?"zero":(oh!=null&&oh<=3?"low":"");
   let badge;
