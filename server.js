@@ -312,6 +312,75 @@ async function syncFromShipStation() {
   return { ok: true, scanned, with_location: withLoc, imported, updated };
 }
 
+/* --------------------------------------- Orders → digital pick list --------------------------------------- */
+// ShipStation is the source of truth for what's on a packing slip. Look an order up by its order number
+// (that's what the packing-slip barcode encodes, e.g. "LBO8958").
+async function ssGetOrderByNumber(rawCode) {
+  if (!ssConfigured()) return null;
+  const code = String(rawCode || "").trim().replace(/^#/, "");
+  // 1) by order number (what "LBO8958" packing-slip barcodes encode)
+  let list = [];
+  try { const j = await ssReq("GET", `/orders?orderNumber=${encodeURIComponent(code)}&pageSize=50`); list = (j && j.orders) || []; } catch {}
+  const exact = list.filter((o) => String(o.orderNumber || "").toLowerCase() === code.toLowerCase());
+  // Prefer an exact match; if several, the most recent (highest orderId) wins.
+  const pick = (exact.length ? exact : list).sort((a, b) => (b.orderId || 0) - (a.orderId || 0))[0] || null;
+  if (pick) return pick;
+  // 2) fall back to the raw ShipStation order id (some slips encode that instead)
+  if (/^\d{3,}$/.test(code)) {
+    try { const o = await ssReq("GET", `/orders/${encodeURIComponent(code)}`); if (o && o.orderId) return o; } catch {}
+  }
+  return null;
+}
+function brandFromOrderNo(no) {
+  const p = ((String(no).match(/^#?([A-Za-z]+)/) || [])[1] || "").toUpperCase();
+  return p === "LBO" ? "Larkspur Baby Outlet" : p === "LB" ? "Larkspur Baby" : p === "BB" ? "Bumbunny Baby" : null;
+}
+// Build the digital packing list: each line item joined to its current bin (DB → order's own
+// warehouseLocation → ShipStation read-through) and live on-hand from Shopify, sorted for picking.
+async function buildPickList(rawCode) {
+  const code = String(rawCode || "").trim().replace(/^#/, "");
+  if (!code) return { found: false, code: rawCode };
+  let order = null;
+  try { order = await ssGetOrderByNumber(code); } catch (e) { return { found: false, code, error: e.message }; }
+  if (!order) return { found: false, code };
+  // Combine duplicate SKUs; drop lines without a SKU (insurance/package-protection etc.).
+  const bySku = {};
+  for (const it of (order.items || [])) {
+    if (!it || !it.sku || Number(it.quantity) === 0) continue;
+    const k = it.sku;
+    if (!bySku[k]) bySku[k] = { sku: it.sku, name: it.name || "", qty: 0, ss_loc: String(it.warehouseLocation || "").trim() || null, image: it.imageUrl || null };
+    bySku[k].qty += Number(it.quantity) || 0;
+    if (!bySku[k].ss_loc && it.warehouseLocation) bySku[k].ss_loc = String(it.warehouseLocation).trim();
+  }
+  const skus = Object.keys(bySku);
+  const binBySku = {};
+  if (skus.length) { const b = await db(`SELECT sku,bin FROM item_location WHERE sku = ANY($1)`, [skus]); for (const r of b.rows) binBySku[r.sku] = r.bin; }
+  const items = await Promise.all(skus.map(async (sku) => {
+    const base = bySku[sku];
+    let bin = binBySku[sku] || base.ss_loc || null;
+    if (!bin) { try { bin = await readThroughBin(sku, base.name); } catch {} }
+    let on_hand = null, title = base.name, image = base.image, status = null;
+    try {
+      const f = (await shopifyFind({ sku })).filter((m) => !m.error);
+      if (f.length) { on_hand = f.reduce((s, m) => s + (Number(m.qty) || 0), 0); title = f[0].title || title; image = f.find((m) => m.image)?.image || image; status = f[0].status || null; }
+    } catch {}
+    return { sku, name: title, qty: base.qty, bin, on_hand, image, status };
+  }));
+  // Sort by bin (natural), items without a bin go last so the picker walks a route.
+  items.sort((a, b) => {
+    const ka = a.bin ? String(a.bin).toLowerCase() : null, kb = b.bin ? String(b.bin).toLowerCase() : null;
+    if (ka === null && kb === null) return (a.name || "").localeCompare(b.name || "");
+    if (ka === null) return 1; if (kb === null) return -1;
+    return ka.localeCompare(kb, undefined, { numeric: true, sensitivity: "base" });
+  });
+  return {
+    found: true, order_number: order.orderNumber, order_status: order.orderStatus,
+    brand: brandFromOrderNo(order.orderNumber), ship_to: (order.shipTo && order.shipTo.name) || null,
+    order_date: order.orderDate || null, item_count: items.length,
+    total_qty: items.reduce((s, i) => s + (i.qty || 0), 0), items,
+  };
+}
+
 // Resolve a scanned code → an item or a bin.
 async function resolveCode(raw) {
   const code = String(raw || "").trim();
@@ -342,7 +411,15 @@ async function resolveCode(raw) {
       history: await getHistory(sku, 15),
     };
   }
-  // 3) unknown — let the user assign it as a new SKU if they want.
+  // 3) maybe an order / packing-slip barcode. Two shapes: an order number (letters + digits,
+  //    e.g. LBO8958) or a raw numeric ShipStation order id (6-11 digits — narrower than a 12-13
+  //    digit UPC so we don't mistake a product barcode for an order). This runs only AFTER the
+  //    SKU/UPC/bin lookups above have all missed, so real items are never treated as orders.
+  const oc = code.replace(/^#/, "");
+  if (ssConfigured() && (/^[A-Za-z]{1,5}\d{3,9}$/.test(oc) || /^\d{6,11}$/.test(oc))) {
+    try { const pl = await buildPickList(oc); if (pl.found) return { type: "order", ...pl }; } catch {}
+  }
+  // 4) unknown — let the user assign it as a new SKU if they want.
   return { type: "unknown", code };
 }
 
@@ -365,6 +442,12 @@ app.get("/api/role", (req, res) => res.json({ ok: authed(req), user: userFromKey
 app.get("/api/resolve", async (req, res) => {
   if (!guard(req, res)) return;
   try { res.json(await resolveCode(req.query.code)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Digital pick list for an order (scan the packing-slip barcode or type the order #).
+app.get("/api/order", async (req, res) => {
+  if (!guard(req, res)) return;
+  try { res.json(await buildPickList(req.query.code)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Full item detail by SKU.
