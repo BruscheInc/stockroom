@@ -80,6 +80,12 @@
   .binchip button{background:rgba(255,107,107,.18);border:1px solid rgba(255,107,107,.5);color:#ffb0b0;border-radius:50%;width:24px;height:24px;line-height:1;font-size:13px;padding:0;display:flex;align-items:center;justify-content:center}
   .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
   .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
+  .oosbtn{margin-top:7px;background:rgba(255,180,84,.14);border:1px solid rgba(255,180,84,.4);color:var(--warn);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700}
+  .modal{position:fixed;inset:0;background:rgba(3,8,16,.78);z-index:80;display:none;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
+  .modal.show{display:flex}
+  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:640px;width:100%;margin:18px 0 40px;padding:16px}
+  .modal .box h3{margin:0;font-size:18px}
+  .modal textarea{width:100%;min-height:280px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:14px;line-height:1.5;resize:vertical}
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -174,6 +180,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="modal" id="oosModal"><div class="box" id="oosBox"></div></div>
 <div id="printArea"></div>
 
 <script>
@@ -540,7 +547,8 @@ function renderOrder(d, mount){
     const oh = it.on_hand==null ? '<span class="muted">—</span>' : `<b>${it.on_hand}</b>`;
     return `<tr onclick="lookup('${esc(it.sku)}')" style="cursor:pointer">
       <td>${binCell}</td>
-      <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div></td>
+      <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div>
+        <button class="oosbtn" onclick="event.stopPropagation();openOos('${esc(d.order_number)}','${esc(it.sku)}')" title="Can't find it — email the customer">⚠️ Out of stock</button></td>
       <td class="n"><span class="big" style="font-size:22px">${it.qty}</span></td>
       <td class="n">${oh}</td>
     </tr>`;
@@ -582,6 +590,44 @@ function printOrder(){
     </table></div>`;
   pa.style.display="block";
   setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; }, 800); }, 300);
+}
+
+/* ---------- out of stock → draft customer email ---------- */
+function money(n){ return "$"+(Math.round((Number(n)||0)*100)/100).toFixed(2); }
+async function openOos(order, sku){
+  const m=$("oosModal"), box=$("oosBox");
+  box.innerHTML='<div class="center muted" style="padding:34px">Preparing the draft…</div>'; m.classList.add("show");
+  let d; try{ d=await api(`/api/oos/preview?order=${encodeURIComponent(order)}&sku=${encodeURIComponent(sku)}`); }
+  catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t build the draft.<br><button class="btn sec" style="margin-top:12px" onclick="closeOos()">Close</button></div>'; return; }
+  if(!d || !d.found){ box.innerHTML=`<div style="padding:8px"><h3>Can't draft this</h3><p class="muted">${d&&d.no_item?"That item isn't on the order.":"Order not found."}</p><button class="btn sec wide" onclick="closeOos()">Close</button></div>`; return; }
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h3 style="flex:1">⚠️ Out of stock — draft email</h3>
+      <button class="btn sec" onclick="closeOos()" style="padding:6px 12px">✕</button>
+    </div>
+    <div class="sub" style="margin-bottom:10px">Order <b>${esc(d.order_number)}</b> · ${esc(d.brand||"")} · to ${esc(d.customer_name||"customer")}${d.customer_email?` &lt;${esc(d.customer_email)}&gt;`:""}</div>
+    <div class="card" style="margin:0 0 10px;padding:6px 12px">
+      <div class="row"><span class="k">Item</span><span class="v" style="max-width:70%">${esc(d.item.name)}</span></div>
+      <div class="row"><span class="k">Item value</span><span class="v">${money(d.item_value)}</span></div>
+      <div class="row"><span class="k">Store credit (+15%)</span><span class="v" style="color:var(--accent)">${money(d.credit_value)}</span></div>
+    </div>
+    <div class="sectlabel" style="margin-top:0">Email to the customer — edit if you like</div>
+    <textarea id="oosText" spellcheck="true">${esc(d.text)}</textarea>
+    <div class="moverow" style="margin-top:12px">
+      <button class="btn sec" onclick="closeOos()">Cancel</button>
+      <button class="btn" style="flex:1" onclick="sendOos('${esc(order)}','${esc(d.item.sku)}')">Send to Jose for approval →</button>
+    </div>
+    <div class="note">Posts to your Slack for Approve / Deny / Edit — nothing goes to the customer until you approve.</div>`;
+}
+function closeOos(){ $("oosModal").classList.remove("show"); }
+async function sendOos(order, sku){
+  const text=$("oosText")?$("oosText").value:"";
+  const btns=$("oosBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
+  try{
+    const r=await api("/api/oos/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,order,sku,text})});
+    if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
+    closeOos(); toast(`Sent to Jose for approval · case #${r.case_id}`);
+  }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
