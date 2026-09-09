@@ -86,6 +86,40 @@
   .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:640px;width:100%;margin:18px 0 40px;padding:16px}
   .modal .box h3{margin:0;font-size:18px}
   .modal textarea{width:100%;min-height:280px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:14px;line-height:1.5;resize:vertical}
+  .modal .box input[type=number]{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px;font-size:16px}
+  /* hamburger drawer */
+  .hb{background:none;border:none;color:var(--ink);font-size:22px;padding:0 8px 0 0;line-height:1;cursor:pointer}
+  .drawer{position:fixed;inset:0;z-index:70;display:none}
+  .drawer.show{display:block}
+  .drawer .scrim{position:absolute;inset:0;background:rgba(3,8,16,.6)}
+  .drawer .panel{position:absolute;top:0;left:0;bottom:0;width:284px;max-width:84vw;background:var(--panel);border-right:1px solid var(--line);padding:14px 12px calc(14px + env(safe-area-inset-bottom));overflow-y:auto}
+  .menuhead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .menuitem{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;color:var(--ink);padding:13px 10px;border-radius:10px;font-size:15px}
+  .menuitem .i{font-size:20px;width:24px;text-align:center}
+  .menuitem:active{transform:translateY(1px)} .menuitem.on{background:rgba(57,217,138,.14);color:var(--accent)}
+  .menusec{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 6px 4px}
+  /* stock verification */
+  .statgrid{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+  .stat{flex:1;min-width:64px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+  .stat .n{font-size:19px;font-weight:800}.stat .l{font-size:10.5px;color:var(--muted)}
+  .stat.warn .n{color:var(--warn)}.stat.bad .n{color:var(--bad)}
+  .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
+  .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .vrow label{font-size:12px;color:var(--muted)}
+  .vrow input,.vrow select{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:8px 10px;font-size:14px}
+  .vrow input[type=number]{width:88px}
+  .vtoggle{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+  .vitem{display:flex;gap:10px;align-items:center;padding:11px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+  .vitem:last-child{border-bottom:none}
+  .vitem .oh{font-size:22px;font-weight:800;min-width:44px;text-align:center}
+  .vitem .oh.low{color:var(--warn)} .vitem .oh.zero{color:var(--bad)}
+  .vitem .meta{flex:1;min-width:0}
+  .vitem .vname{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vitem .vsub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vbadge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;white-space:nowrap}
+  .vbadge.never{background:rgba(255,180,84,.16);color:var(--warn)}
+  .vbadge.ok{background:rgba(57,217,138,.16);color:var(--accent)}
+  .vbadge.disc{background:rgba(255,107,107,.16);color:#ffb0b0}
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -106,6 +140,7 @@
 
 <div id="appwrap" class="hidden">
 <header>
+  <button class="hb" onclick="openMenu()" aria-label="Menu">☰</button>
   <div class="logo">📦 <b>Stockroom</b></div>
   <div class="who">👤 <b id="whoName" style="color:var(--ink)">…</b> <a href="#" onclick="signOut();return false" style="color:var(--muted);margin-left:8px;font-size:12px">sign out</a></div>
 </header>
@@ -169,6 +204,39 @@
     <div class="note" id="orderNote">Scan the barcode at the bottom of a packing slip, or type the order number, to see where every item is and how many to pick.</div>
     <div id="orderResult"></div>
   </section>
+
+  <!-- STOCK VERIFICATION TAB -->
+  <section id="tab-verify" class="hidden">
+    <div class="statgrid" id="vstats"></div>
+    <div class="vfilters">
+      <div class="vrow">
+        <input id="vq" placeholder="Search SKU or name…" autocomplete="off" oninput="debouncedStock()" style="flex:1;min-width:130px">
+        <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
+      </div>
+      <div class="vrow">
+        <label>On hand ≤</label><input id="vqty" type="number" min="0" placeholder="any" inputmode="numeric" oninput="debouncedStock()">
+        <label style="margin-left:auto">Brand</label>
+        <select id="vbrand" onchange="loadStockList()"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
+      </div>
+      <div class="vrow">
+        <label>Verified</label>
+        <select id="vop" onchange="loadStockList()"><option value="any">Any</option><option value="never">Never</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
+        <input id="vdate" type="date" onchange="loadStockList()">
+      </div>
+      <div class="vrow">
+        <label class="vtoggle"><input type="checkbox" id="vdisc" onchange="loadStockList()"> Mismatch</label>
+        <label class="vtoggle"><input type="checkbox" id="vnobin" onchange="loadStockList()"> No bin</label>
+        <select id="vsort" onchange="loadStockList()" style="margin-left:auto">
+          <option value="onhand_asc">Qty low→high</option>
+          <option value="onhand_desc">Qty high→low</option>
+          <option value="verified_old">Oldest verified</option>
+          <option value="verified_new">Newest verified</option>
+          <option value="title">Name A→Z</option>
+        </select>
+      </div>
+    </div>
+    <div id="vlist" class="card"><div class="muted center">Loading…</div></div>
+  </section>
 </div>
 
 <nav class="tabs">
@@ -181,6 +249,25 @@
 
 <div class="toast" id="toast"></div>
 <div class="modal" id="oosModal"><div class="box" id="oosBox"></div></div>
+<div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
+<div class="drawer" id="drawer">
+  <div class="scrim" onclick="closeMenu()"></div>
+  <div class="panel">
+    <div class="menuhead"><div class="logo">📦 <b>Stockroom</b></div><div style="flex:1"></div><button class="hb" onclick="closeMenu()">✕</button></div>
+    <div class="sub" style="color:var(--muted);font-size:12px;margin:0 6px 4px">Signed in as <b id="menuUser" style="color:var(--ink)"></b></div>
+    <div class="menusec">Functions</div>
+    <button class="menuitem" data-tab="scan" onclick="menuGo('scan')"><span class="i">🔍</span> Scan</button>
+    <button class="menuitem" data-tab="order" onclick="menuGo('order')"><span class="i">🧾</span> Pick List</button>
+    <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><span class="i">📊</span> Stock Verification</button>
+    <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
+    <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
+    <div class="menusec">Actions</div>
+    <button class="menuitem" onclick="closeMenu();refreshNow()"><span class="i">⟳</span> Refresh</button>
+    <button class="menuitem" onclick="closeMenu();showTab('bins');syncSS()"><span class="i">📥</span> Import bins (ShipStation)</button>
+    <button class="menuitem" onclick="closeMenu();syncInventory()"><span class="i">📊</span> Sync inventory (Shopify)</button>
+    <button class="menuitem" onclick="signOut()"><span class="i">🚪</span> Sign out</button>
+  </div>
+</div>
 <div id="printArea"></div>
 
 <script>
@@ -224,12 +311,17 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","bins","search"]){ $("tab-"+x).classList.toggle("hidden",x!==t); $("nav-"+x).classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
   if(t==="scan") setTimeout(keepFocus,50);
   if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
+  if(t==="verify"){ loadStockSummary(); loadStockList(); }
 }
+function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
+function closeMenu(){ $("drawer").classList.remove("show"); }
+function menuGo(t){ closeMenu(); showTab(t); }
 
 /* ---------- scanner arming ----------
    A Bluetooth/USB scanner (e.g. Tera) is a keyboard. On iOS it only feeds a FOCUSED field, and iOS
@@ -590,6 +682,101 @@ function printOrder(){
     </table></div>`;
   pa.style.display="block";
   setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; }, 800); }, 300);
+}
+
+/* ---------- stock verification ---------- */
+function fmtD(ts){ try{ return new Date(ts).toLocaleDateString([],{month:"short",day:"numeric",year:"numeric"}); }catch(e){ return "—"; } }
+function stockParams(){
+  const p=new URLSearchParams();
+  const q=$("vq").value.trim(); if(q)p.set("q",q);
+  const qty=$("vqty").value.trim(); if(qty!=="")p.set("qtyMax",qty);
+  const brand=$("vbrand").value; if(brand)p.set("brand",brand);
+  const vop=$("vop").value; if(vop&&vop!=="any")p.set("vop",vop);
+  const vdate=$("vdate").value; if(vdate&&["before","after","on"].includes(vop))p.set("vdate",vdate);
+  if($("vdisc").checked)p.set("disc","1");
+  if($("vnobin").checked)p.set("nobin","1");
+  p.set("sort",$("vsort").value);
+  return p.toString();
+}
+let _st=null; function debouncedStock(){ clearTimeout(_st); _st=setTimeout(loadStockList,300); }
+async function loadStockSummary(){
+  try{ const s=await api("/api/stock/summary");
+    $("vstats").innerHTML=[["Total",s.total,""],["Never",s.never_verified,"warn"],["Low ≤3",s.low_stock,"warn"],["Stale 30d+",s.stale,"warn"],["Mismatch",s.discrepancies,"bad"]]
+      .map(([l,n,c])=>`<div class="stat ${c}"><div class="n">${n==null?"—":n}</div><div class="l">${l}</div></div>`).join("");
+    const b=$("vsyncBtn");
+    if(s.sync&&s.sync.running){ if(b)b.textContent=`⏳ ${s.sync.synced}`; if(!$("tab-verify").classList.contains("hidden")) setTimeout(loadStockSummary,3000); }
+    else if(b) b.textContent="📊 Sync";
+  }catch(e){}
+}
+async function loadStockList(){
+  const el=$("vlist");
+  try{ const d=await api("/api/stock/list?"+stockParams());
+    const items=d.items||[];
+    if(!items.length){ el.innerHTML='<div class="muted center">No items match these filters.'+(($("vq").value||$("vqty").value)?' <a href="#" onclick="clearStockFilters();return false" style="color:var(--accent2)">clear</a>':'')+'</div>'; return; }
+    el.innerHTML=items.map(renderStockRow).join("")+(items.length>=d.limit?`<div class="muted center" style="padding:10px">Showing first ${d.limit} — narrow with filters.</div>`:"");
+  }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load — is the inventory synced yet? Tap 📊 Sync.</div>'; }
+}
+function clearStockFilters(){ $("vq").value="";$("vqty").value="";$("vbrand").value="";$("vop").value="any";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
+function renderStockRow(it){
+  const oh=it.on_hand; const ohc=oh===0?"zero":(oh!=null&&oh<=3?"low":"");
+  let badge;
+  if(!it.verified_at) badge='<span class="vbadge never">never</span>';
+  else if(it.matched===false) badge='<span class="vbadge disc">mismatch</span>';
+  else badge=`<span class="vbadge ok">✓ ${fmtD(it.verified_at)}</span>`;
+  return `<div class="vitem" onclick="openVerify('${esc(it.sku)}')">
+    <div class="oh ${ohc}">${oh==null?"—":oh}</div>
+    <div class="meta">
+      <div class="vname">${esc(it.title||it.sku)}</div>
+      <div class="vsub">${esc(it.brand)} · <span class="mono">${esc(it.sku)}</span>${it.bin?` · 📍 ${esc(it.bin)}`:""}</div>
+    </div>
+    <div style="text-align:right;flex:none">${badge}<div class="vsub">${it.verified_at?"by "+esc(it.verified_by||"?"):"not counted"}</div></div>
+  </div>`;
+}
+async function openVerify(sku){
+  const m=$("verifyModal"), box=$("verifyBox");
+  box.innerHTML='<div class="center muted" style="padding:34px">Loading…</div>'; m.classList.add("show");
+  let d; try{ d=await api("/api/stock/item/"+encodeURIComponent(sku)); }
+  catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closeVerify()">Close</button></div>'; return; }
+  const sys=d.system_qty;
+  const brands=(d.brands||[]).map(b=>`<div class="row"><span class="k">${esc(b.brand)}</span><span class="v">${b.on_hand==null?"—":b.on_hand}${b.status&&String(b.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(b.status).toLowerCase())}`:""}</span></div>`).join("");
+  const last=d.last?`Last verified ${fmt(d.last.verified_at)} by ${esc(d.last.verified_by||"?")} — counted ${d.last.counted_qty}${d.last.matched===false?" ⚠️ was a mismatch":""}`:"Never verified yet.";
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">📊 Verify stock</h3><button class="btn sec" style="padding:6px 12px" onclick="closeVerify()">✕</button></div>
+    <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
+    <div class="sub mono" style="margin-bottom:8px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div class="card" style="margin:0 0 10px;padding:6px 12px">
+      <div class="row"><span class="k">Shopify on hand</span><span class="big" style="font-size:22px">${sys==null?"—":sys}</span></div>
+      ${brands}
+    </div>
+    <div class="note" style="text-align:left;margin:0 0 8px">${last}</div>
+    <div class="sectlabel" style="margin-top:0">Physical count on the shelf</div>
+    <input id="vcount" type="number" min="0" inputmode="numeric" placeholder="Enter the number you counted" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
+    <div class="moverow" style="margin-top:10px">
+      <button class="btn sec" onclick="closeVerify()">Cancel</button>
+      <button class="btn" style="flex:1" onclick="submitVerify('${esc(sku)}')">Save verification</button>
+    </div>
+    <div class="note">If your count differs, Shopify inventory is corrected to match it. Recorded under <b>${esc(whoName()||"you")}</b>, ${fmtD(Date.now())}.</div>
+    ${(d.history&&d.history.length)?`<div class="sectlabel">History</div><div class="hist">${d.history.map(h=>`<div class="h"><span>counted <b>${h.counted_qty}</b> vs ${h.system_qty==null?"—":h.system_qty}${h.corrected?' <span style="color:var(--accent)">· corrected</span>':""}</span><span class="muted">${esc(h.user_name||"")} · ${fmt(h.ts)}</span></div>`).join("")}</div>`:""}`;
+  setTimeout(()=>{const c=$("vcount");if(c)c.focus();},60);
+}
+function closeVerify(){ $("verifyModal").classList.remove("show"); }
+async function submitVerify(sku){
+  const c=$("vcount"); const v=c?c.value.trim():""; if(v===""){ toast("Enter a count",true); return; }
+  const btns=$("verifyBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
+  try{ const r=await api("/api/stock/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,counted:Number(v)})});
+    if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
+    closeVerify();
+    let msg = r.matched ? `Verified ✓ — matches ${r.system_qty}` : `Counted ${r.counted}`;
+    if(!r.matched && r.correction){ const bad=r.correction.filter(x=>!x.ok).length; msg += bad?` · Shopify update failed`:` · Shopify → ${r.counted}`; }
+    toast(msg, !!(r.correction&&r.correction.some(x=>!x.ok)));
+    loadStockList(); loadStockSummary();
+  }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
+}
+async function syncInventory(){
+  try{ const r=await api("/api/stock/sync-inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY})});
+    if(r.running) toast(`Sync already running (${r.synced} so far)`); else toast("Inventory sync started — this can take a few minutes");
+    setTimeout(loadStockSummary,1500);
+  }catch(e){ toast("Sync failed",true); }
 }
 
 /* ---------- out of stock → draft customer email ---------- */
