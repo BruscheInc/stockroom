@@ -150,13 +150,12 @@
   <!-- SCAN TAB -->
   <section id="tab-scan">
     <div class="scanbar">
-      <input id="scan" placeholder="Ready — just scan…" inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false" />
-      <button class="btn sec" id="kbBtn" onclick="typeMode()" title="Type manually" style="padding:0 13px;font-size:18px">⌨️</button>
+      <input id="scan" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
       <button class="btn" onclick="submitScan()">Go</button>
     </div>
     <button class="btn blue wide" id="camBtn" onclick="toggleCamera()">📷 Scan with camera</button>
     <div id="reader"></div>
-    <div class="note" id="scanNote"><span style="color:var(--accent)">● Ready to scan</span> — pull the scanner trigger anytime, tap 📷 for the camera, or ⌨️ to type.</div>
+    <div class="note" id="scanNote"><span style="color:var(--accent)">● Ready to scan</span> — pull the scanner trigger anytime, tap 📷 for the camera, or tap the box to type.</div>
     <div id="result"></div>
   </section>
 
@@ -327,17 +326,17 @@ function menuGo(t){ closeMenu(); showTab(t); }
    A Bluetooth/USB scanner (e.g. Tera) is a keyboard. On iOS it only feeds a FOCUSED field, and iOS
    shows its "Done" bar for any focused field — so we keep the #scan box focused but in inputmode
    "none": armed for the scanner, but no on-screen keyboard and no Done bar. Tap ⌨️ to type. */
-function armScanner(){ const s=$("scan"); if(!s) return; if($("tab-scan").classList.contains("hidden")) return;
-  const ae=document.activeElement;
-  if(ae && ae!==s && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA")) return; // don't steal from another field
-  s.inputMode="none"; try{ s.focus({preventScroll:true}); }catch(e){ try{ s.focus(); }catch(_){} }
+// On a DESKTOP (scanner gun wedge into a focused box) we keep the scan box focused. On a phone we do
+// NOT — a focused field forces iOS to show its keyboard/"Done" bar; instead the global capture below
+// reads the Bluetooth scanner even with nothing focused, so tapping any field opens the keyboard normally.
+function armScanner(){ if(IS_TOUCH) return; const s=$("scan"); if(!s || $("tab-scan").classList.contains("hidden")) return;
+  const ae=document.activeElement; if(ae && ae!==s && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA")) return;
+  try{ s.focus({preventScroll:true}); }catch(e){ try{ s.focus(); }catch(_){} }
 }
 const keepFocus = armScanner; // (kept name for existing callers)
-function typeMode(){ const s=$("scan"); if(!s) return; s.inputMode="text"; s.placeholder="Type SKU / UPC / bin, then Go…"; try{ s.focus(); }catch(e){} }
 document.addEventListener("click",(e)=>{ if(e.target.closest("input,button,a")) return; armScanner(); });
 $("scan").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); submitScan(); } });
-async function submitScan(){ const s=$("scan"); const code=s.value.trim(); s.value=""; s.placeholder="Ready — just scan…";
-  setTimeout(armScanner,0); // re-arm (drops back to inputmode none, no keyboard)
+async function submitScan(){ const s=$("scan"); const code=s.value.trim(); s.value="";
   if(!code) return;
   // Multi-word text isn't a barcode/SKU — treat it as a name search.
   if(/\s/.test(code)){ showTab("search"); $("q").value=code; doFind(); return; }
