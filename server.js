@@ -82,6 +82,41 @@ async function migrate() {
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_hist_sku ON location_history(sku, ts DESC)`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
+  // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
+  await db(`CREATE TABLE IF NOT EXISTS stock_items (
+    sku TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    title TEXT,
+    variant TEXT,
+    on_hand INTEGER,
+    status TEXT,
+    inv_item_id TEXT,
+    synced_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (sku, brand)
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_stock_onhand ON stock_items(on_hand)`);
+  await db(`CREATE TABLE IF NOT EXISTS stock_verifications (
+    sku TEXT PRIMARY KEY,
+    counted_qty INTEGER,
+    system_qty INTEGER,
+    matched BOOLEAN,
+    verified_by TEXT,
+    verified_at TIMESTAMPTZ DEFAULT now(),
+    note TEXT
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_verif_at ON stock_verifications(verified_at)`);
+  await db(`CREATE TABLE IF NOT EXISTS stock_verification_log (
+    id BIGSERIAL PRIMARY KEY,
+    sku TEXT NOT NULL,
+    counted_qty INTEGER,
+    system_qty INTEGER,
+    corrected BOOLEAN DEFAULT false,
+    correction_note TEXT,
+    user_name TEXT,
+    note TEXT,
+    ts TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_verlog_sku ON stock_verification_log(sku, ts DESC)`);
   await db(`CREATE TABLE IF NOT EXISTS oos_cases (
     id BIGSERIAL PRIMARY KEY,
     order_number TEXT NOT NULL,
@@ -190,6 +225,82 @@ async function shopifySearchByName(term) {
     } catch (e) { /* skip a store that errors, keep the rest */ }
   }));
   return rows;
+}
+
+/* --------------------------------------- Stock Verification (Shopify inventory) --------------------------------------- */
+// The primary fulfillment location per store (cached) — needed to set on-hand quantities.
+async function storeLocationId(st) {
+  if (st._locId !== undefined) return st._locId;
+  try {
+    const d = await storeGraphQL(st, `{locations(first:10){edges{node{id name isActive fulfillsOnlineOrders}}}}`, {});
+    const locs = (d.locations?.edges || []).map((e) => e.node);
+    const pick = locs.find((l) => l.isActive && l.fulfillsOnlineOrders) || locs.find((l) => l.isActive) || locs[0];
+    st._locId = pick ? pick.id : null;
+  } catch (e) { st._locId = null; }
+  return st._locId;
+}
+// Snapshot every variant's ON HAND into stock_items (paged, all stores). Heavy — runs in the background.
+// NOTE: variant.inventoryQuantity is "available" (on hand − committed − reserved). Jose needs ON HAND,
+// so we read the on_hand quantity from each inventory level and sum across locations.
+const INV_SYNC_QUERY = `query($cursor:String){ productVariants(first:100, after:$cursor){ pageInfo{hasNextPage endCursor} edges{ node{ sku displayName inventoryItem{ id inventoryLevels(first:10){ edges{ node{ quantities(names:["on_hand"]){ name quantity } } } } } product{title status} } } } }`;
+function onHandOf(node) {
+  const lv = node?.inventoryItem?.inventoryLevels?.edges || [];
+  let sum = 0, seen = false;
+  for (const e of lv) { const q = (e.node.quantities || []).find((x) => x.name === "on_hand"); if (q && q.quantity != null) { sum += Number(q.quantity) || 0; seen = true; } }
+  return seen ? sum : null;
+}
+let invSync = { running: false, synced: 0, at: null, error: null };
+async function syncShopifyInventory() {
+  if (invSync.running) return { running: true, synced: invSync.synced };
+  invSync = { running: true, synced: 0, at: new Date().toISOString(), error: null };
+  let total = 0;
+  try {
+    for (const st of STORES) {
+      let cursor = null, has = true, guard = 0;
+      while (has && guard++ < 500) {
+        const d = await storeGraphQL(st, INV_SYNC_QUERY, { cursor });
+        const conn = d.productVariants || {};
+        for (const e of (conn.edges || [])) {
+          const n = e.node; if (!n.sku) continue;
+          await db(
+            `INSERT INTO stock_items (sku,brand,title,variant,on_hand,status,inv_item_id,synced_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+             ON CONFLICT (sku,brand) DO UPDATE SET title=EXCLUDED.title, variant=EXCLUDED.variant, on_hand=EXCLUDED.on_hand, status=EXCLUDED.status, inv_item_id=EXCLUDED.inv_item_id, synced_at=now()`,
+            [n.sku, st.brand, n.product?.title || n.displayName, n.displayName, onHandOf(n), n.product?.status || null, n.inventoryItem?.id || null]
+          );
+          total++;
+        }
+        has = conn.pageInfo?.hasNextPage; cursor = conn.pageInfo?.endCursor;
+        invSync.synced = total;
+        if (has) await new Promise((r) => setTimeout(r, 300)); // stay under Shopify's cost limit
+      }
+    }
+    invSync = { running: false, synced: total, at: new Date().toISOString(), error: null };
+    return { ok: true, synced: total };
+  } catch (e) {
+    invSync = { running: false, synced: total, at: new Date().toISOString(), error: e.message };
+    return { error: e.message, synced: total };
+  }
+}
+// Set Shopify on-hand to a counted quantity for a SKU, across every store that carries it.
+async function shopifySetOnHand(sku, qty) {
+  const rows = (await db(`SELECT brand, inv_item_id, on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+  const out = [];
+  for (const r of rows) {
+    const st = STORES.find((s) => s.brand === r.brand);
+    if (!st || !r.inv_item_id) { out.push({ brand: r.brand, ok: false, error: "no Shopify inventory item on file" }); continue; }
+    try {
+      const locId = await storeLocationId(st);
+      if (!locId) { out.push({ brand: r.brand, ok: false, error: "no fulfillment location" }); continue; }
+      const d = await storeGraphQL(st,
+        `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input){ userErrors{field message} } }`,
+        { input: { reason: "correction", referenceDocumentUri: "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: r.inv_item_id, locationId: locId, quantity: Number(qty) }] } });
+      const ue = d.inventorySetOnHandQuantities?.userErrors || [];
+      if (ue.length) { out.push({ brand: r.brand, ok: false, error: ue.map((x) => x.message).join("; ") }); }
+      else { out.push({ brand: r.brand, ok: true, from: r.on_hand, to: Number(qty) }); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [Number(qty), sku, r.brand]); }
+    } catch (e) { out.push({ brand: r.brand, ok: false, error: e.message }); }
+  }
+  return out;
 }
 
 /* --------------------------------------- ShipStation (V1) --------------------------------------- */
@@ -676,6 +787,101 @@ app.get("/api/search", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* ---- Stock Verification API ---- */
+// Header counts.
+app.get("/api/stock/summary", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`
+      SELECT
+        (SELECT COUNT(*) FROM stock_items WHERE status IS NULL OR status<>'ARCHIVED')::int AS total,
+        (SELECT COUNT(*) FROM stock_items si WHERE (si.status IS NULL OR si.status<>'ARCHIVED') AND NOT EXISTS (SELECT 1 FROM stock_verifications sv WHERE sv.sku=si.sku))::int AS never_verified,
+        (SELECT COUNT(*) FROM stock_items WHERE on_hand IS NOT NULL AND on_hand<=3 AND (status IS NULL OR status<>'ARCHIVED'))::int AS low_stock,
+        (SELECT COUNT(*) FROM stock_verifications WHERE verified_at < now() - interval '30 days')::int AS stale,
+        (SELECT COUNT(*) FROM stock_verifications WHERE matched = false)::int AS discrepancies`);
+    res.json({ ...r.rows[0], sync: invSync });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Filtered / sorted verification worklist.
+app.get("/api/stock/list", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const q = String(req.query.q || "").trim(), brand = String(req.query.brand || "").trim();
+    const qtyMax = req.query.qtyMax !== undefined && req.query.qtyMax !== "" ? Number(req.query.qtyMax) : null;
+    const vop = String(req.query.vop || "any").toLowerCase(), vdate = String(req.query.vdate || "").trim();
+    const disc = req.query.disc === "1", nobin = req.query.nobin === "1", includeArchived = req.query.archived === "1";
+    const sort = String(req.query.sort || "onhand_asc").toLowerCase();
+    const limit = Math.min(Number(req.query.limit) || 300, 1000), offset = Number(req.query.offset) || 0;
+    const where = [], p = [];
+    if (!includeArchived) where.push(`(si.status IS NULL OR si.status<>'ARCHIVED')`);
+    if (q) { p.push(`%${q.toLowerCase()}%`); where.push(`(lower(si.sku) LIKE $${p.length} OR lower(coalesce(si.title,'')) LIKE $${p.length})`); }
+    if (brand) { p.push(brand); where.push(`si.brand = $${p.length}`); }
+    if (qtyMax !== null && Number.isFinite(qtyMax)) { p.push(qtyMax); where.push(`si.on_hand IS NOT NULL AND si.on_hand <= $${p.length}`); }
+    if (disc) where.push(`sv.matched = false`);
+    if (nobin) where.push(`(il.bin IS NULL OR il.bin = '')`);
+    if (vop === "never") where.push(`sv.verified_at IS NULL`);
+    else if (["before", "after", "on"].includes(vop) && vdate) { p.push(vdate); const op = vop === "before" ? "<" : vop === "after" ? ">" : "="; where.push(`sv.verified_at IS NOT NULL AND sv.verified_at::date ${op} $${p.length}::date`); }
+    const orderBy = sort === "onhand_desc" ? "si.on_hand DESC NULLS LAST" : sort === "verified_old" ? "sv.verified_at ASC NULLS FIRST" : sort === "verified_new" ? "sv.verified_at DESC NULLS LAST" : sort === "title" ? "si.title ASC" : "si.on_hand ASC NULLS FIRST";
+    const sql = `SELECT si.sku, si.brand, si.title, si.variant, si.on_hand, si.status,
+        sv.verified_at, sv.verified_by, sv.counted_qty, sv.system_qty, sv.matched, il.bin
+      FROM stock_items si
+      LEFT JOIN stock_verifications sv ON sv.sku = si.sku
+      LEFT JOIN item_location il ON il.sku = si.sku
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY ${orderBy}, si.sku LIMIT ${limit} OFFSET ${offset}`;
+    const r = await db(sql, p);
+    res.json({ items: r.rows, count: r.rows.length, offset, limit });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// One SKU's verification detail + history.
+app.get("/api/stock/item/:sku", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const sku = req.params.sku;
+    const items = (await db(`SELECT brand,title,variant,on_hand,status FROM stock_items WHERE sku=$1`, [sku])).rows;
+    const last = (await db(`SELECT counted_qty,system_qty,matched,verified_by,verified_at,note FROM stock_verifications WHERE sku=$1`, [sku])).rows[0] || null;
+    const bin = (await db(`SELECT bin FROM item_location WHERE sku=$1`, [sku])).rows[0]?.bin || null;
+    const history = (await db(`SELECT counted_qty,system_qty,corrected,correction_note,user_name,note,ts FROM stock_verification_log WHERE sku=$1 ORDER BY ts DESC LIMIT 30`, [sku])).rows;
+    const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
+    res.json({ sku, title: items[0]?.title || null, bin, brands: items, system_qty: items.length ? system : null, last, history });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Record a physical count (who/when) and correct Shopify on-hand to it when it differs.
+app.post("/api/stock/verify", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { sku, counted, note } = req.body || {};
+    if (!sku || counted === undefined || counted === null || counted === "") return res.status(400).json({ error: "sku and counted required" });
+    const cnt = Number(counted);
+    if (!Number.isFinite(cnt) || cnt < 0) return res.status(400).json({ error: "counted must be a non-negative number" });
+    const by = actorOf(req);
+    const items = (await db(`SELECT brand,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+    const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
+    const matched = system != null && cnt === system;
+    let correction = null, correctionNote = null;
+    if (system == null || cnt !== system) {
+      correction = await shopifySetOnHand(sku, cnt);
+      const okc = correction.filter((c) => c.ok), bad = correction.filter((c) => !c.ok);
+      correctionNote = correction.length ? [okc.length ? `set ${okc.map((c) => c.brand).join(", ")} → ${cnt}` : "", bad.length ? `failed: ${bad.map((c) => `${c.brand} (${c.error})`).join("; ")}` : ""].filter(Boolean).join(" · ") : "no Shopify inventory item on file";
+    }
+    await db(`INSERT INTO stock_verifications (sku,counted_qty,system_qty,matched,verified_by,verified_at,note)
+      VALUES ($1,$2,$3,$4,$5,now(),$6)
+      ON CONFLICT (sku) DO UPDATE SET counted_qty=$2, system_qty=$3, matched=$4, verified_by=$5, verified_at=now(), note=$6`,
+      [sku, cnt, system, matched, by, note || null]);
+    await db(`INSERT INTO stock_verification_log (sku,counted_qty,system_qty,corrected,correction_note,user_name,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [sku, cnt, system, !!(correction && correction.some((c) => c.ok)), correctionNote, by, note || null]);
+    res.json({ ok: true, sku, counted: cnt, system_qty: system, matched, verified_by: by, correction, correction_note: correctionNote });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Trigger / poll the Shopify inventory snapshot sync.
+app.post("/api/stock/sync-inventory", async (req, res) => {
+  if (!guard(req, res)) return;
+  if (invSync.running) return res.json({ running: true, synced: invSync.synced });
+  syncShopifyInventory().catch(() => {});
+  res.json({ started: true });
+});
+app.get("/api/stock/sync-status", (req, res) => { if (!guard(req, res)) return; res.json(invSync); });
+
 const PORT = process.env.PORT || 8080;
 (async () => {
   try { await migrate(); console.log("🗄️  Postgres schema ready"); }
@@ -701,5 +907,14 @@ const PORT = process.env.PORT || 8080;
     console.log("📥 syncing bins from ShipStation on boot…");
     runSync("boot");
     setInterval(() => runSync("6h"), 6 * 60 * 60 * 1000);
+  }
+  // Stock Verification: seed the Shopify inventory snapshot on first boot (only if empty), refresh every 12h.
+  if (STORES.length) {
+    try {
+      const n = (await db(`SELECT COUNT(*)::int n FROM stock_items`)).rows[0].n;
+      if (!n) { console.log("📊 stock_items empty — running first Shopify inventory sync (background)…"); syncShopifyInventory().then((r) => console.log("📊 inventory sync:", JSON.stringify(r))).catch((e) => console.error("📊 inventory sync failed:", e.message)); }
+      else console.log(`📊 stock_items: ${n} rows (12h refresh scheduled)`);
+    } catch (e) { console.error("📊 stock_items check failed:", e.message); }
+    setInterval(() => { syncShopifyInventory().then((r) => console.log("📊 inventory 12h sync:", JSON.stringify(r))).catch(() => {}); }, 12 * 60 * 60 * 1000);
   }
 })();
