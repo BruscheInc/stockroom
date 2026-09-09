@@ -209,33 +209,36 @@
     <div class="statgrid" id="vstats"></div>
     <div class="vfilters">
       <div class="vrow">
-        <input id="vq" placeholder="Search SKU or name…" autocomplete="off" oninput="debouncedStock()" style="flex:1;min-width:130px">
+        <input id="vq" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
         <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
       </div>
       <div class="vrow">
         <label>On hand</label>
-        <input id="vqtymin" type="number" min="0" value="1" inputmode="numeric" title="Minimum" oninput="debouncedStock()" style="width:66px">
+        <input id="vqtymin" type="number" min="0" value="1" inputmode="numeric" title="Minimum" style="width:66px">
         <span style="color:var(--muted)">to</span>
-        <input id="vqty" type="number" min="0" value="3" inputmode="numeric" title="Maximum" oninput="debouncedStock()" style="width:66px">
-        <select id="vstatus" onchange="loadStockList()" style="margin-left:auto"><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="ARCHIVED">Disabled</option><option value="ALL">All statuses</option></select>
+        <input id="vqty" type="number" min="0" value="3" inputmode="numeric" title="Maximum" style="width:66px">
+        <select id="vstatus" style="margin-left:auto"><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="ARCHIVED">Disabled</option><option value="ALL">All statuses</option></select>
       </div>
       <div class="vrow">
         <label>Brand</label>
-        <select id="vbrand" onchange="loadStockList()"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
+        <select id="vbrand"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
         <label style="margin-left:auto">Verified</label>
-        <select id="vop" onchange="loadStockList()"><option value="any">Any</option><option value="never">Never</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
-        <input id="vdate" type="date" onchange="loadStockList()">
+        <select id="vop"><option value="any">Any</option><option value="never">Never</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
+        <input id="vdate" type="date">
       </div>
       <div class="vrow">
-        <label class="vtoggle"><input type="checkbox" id="vdisc" onchange="loadStockList()"> Mismatch</label>
-        <label class="vtoggle"><input type="checkbox" id="vnobin" onchange="loadStockList()"> No bin</label>
-        <select id="vsort" onchange="loadStockList()" style="margin-left:auto">
+        <label class="vtoggle"><input type="checkbox" id="vdisc"> Mismatch</label>
+        <label class="vtoggle"><input type="checkbox" id="vnobin"> No bin</label>
+        <select id="vsort" style="margin-left:auto">
           <option value="onhand_asc">Qty low→high</option>
           <option value="onhand_desc">Qty high→low</option>
           <option value="verified_old">Oldest verified</option>
           <option value="verified_new">Newest verified</option>
           <option value="title">Name A→Z</option>
         </select>
+      </div>
+      <div class="vrow">
+        <button class="btn wide" onclick="loadStockList()">🔎 Apply filters</button>
       </div>
     </div>
     <div id="vlist" class="card"><div class="muted center">Loading…</div></div>
@@ -726,7 +729,8 @@ function renderStockRow(it){
   const oh=it.on_hand; const ohc=oh===0?"zero":(oh!=null&&oh<=3?"low":"");
   let badge;
   if(!it.verified_at) badge='<span class="vbadge never">never</span>';
-  else if(it.matched===false) badge='<span class="vbadge disc">mismatch</span>';
+  else if(it.matched===false && it.corrected!==true) badge='<span class="vbadge disc">needs fix</span>';
+  else if(it.corrected===true) badge=`<span class="vbadge ok">✓ fixed ${fmtD(it.verified_at)}</span>`;
   else badge=`<span class="vbadge ok">✓ ${fmtD(it.verified_at)}</span>`;
   return `<div class="vitem" onclick="openVerify('${esc(it.sku)}')">
     <div class="oh ${ohc}">${oh==null?"—":oh}</div>
@@ -744,7 +748,7 @@ async function openVerify(sku){
   catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closeVerify()">Close</button></div>'; return; }
   const sys=d.system_qty;
   const brands=(d.brands||[]).map(b=>`<div class="row"><span class="k">${esc(b.brand)}</span><span class="v">${b.on_hand==null?"—":b.on_hand}${b.status&&String(b.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(b.status).toLowerCase())}`:""}</span></div>`).join("");
-  const last=d.last?`Last verified ${fmt(d.last.verified_at)} by ${esc(d.last.verified_by||"?")} — counted ${d.last.counted_qty}${d.last.matched===false?" ⚠️ was a mismatch":""}`:"Never verified yet.";
+  const last=d.last?`Last verified ${fmt(d.last.verified_at)} by ${esc(d.last.verified_by||"?")} — counted ${d.last.counted_qty}${d.last.corrected?` · corrected Shopify to ${d.last.counted_qty}`:(d.last.matched===false?" · ⚠️ mismatch (not corrected)":"")}`:"Never verified yet.";
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">📊 Verify stock</h3><button class="btn sec" style="padding:6px 12px" onclick="closeVerify()">✕</button></div>
     <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
@@ -771,9 +775,11 @@ async function submitVerify(sku){
   try{ const r=await api("/api/stock/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,counted:Number(v)})});
     if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
     closeVerify();
-    let msg = r.matched ? `Verified ✓ — matches ${r.system_qty}` : `Counted ${r.counted}`;
-    if(!r.matched && r.correction){ const bad=r.correction.filter(x=>!x.ok).length; msg += bad?` · Shopify update failed`:` · Shopify → ${r.counted}`; }
-    toast(msg, !!(r.correction&&r.correction.some(x=>!x.ok)));
+    let msg, bad=false;
+    if(r.matched) msg=`Verified ✓ — matches ${r.system_qty}`;
+    else if(r.corrected) msg=`Corrected Shopify → ${r.counted}`;
+    else { msg=`Counted ${r.counted} · ⚠️ Shopify not updated`; bad=true; }
+    toast(msg, bad);
     loadStockList(); loadStockSummary();
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
