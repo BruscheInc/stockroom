@@ -302,8 +302,9 @@ async function shopifySetOnHand(sku, qty) {
     try {
       const lvl = await itemLevel(st, r.inv_item_id);
       if (!lvl.locId) { out.push({ brand: r.brand, ok: false, error: "no fulfillment location" }); continue; }
+      const idem = require("crypto").randomUUID();
       const d = await storeGraphQL(st,
-        `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input){ userErrors{field message} } }`,
+        `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input) @idempotent(key:"${idem}"){ userErrors{field message} } }`,
         { input: { reason: "correction", referenceDocumentUri: "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: r.inv_item_id, locationId: lvl.locId, quantity: Number(qty), changeFromQuantity: lvl.onHand }] } });
       const ue = d.inventorySetOnHandQuantities?.userErrors || [];
       if (ue.length) { out.push({ brand: r.brand, ok: false, error: ue.map((x) => x.message).join("; ") }); }
