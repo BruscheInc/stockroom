@@ -282,15 +282,15 @@ async function syncShopifyInventory() {
   invSync = { running: false, synced: total, at: new Date().toISOString(), error: errors.length ? errors.join(" | ") : null };
   return { ok: true, synced: total, errors };
 }
-// Resolve the location that actually stocks a given inventory item (uses read_inventory — no separate
-// locations-scope needed). Falls back to the store's primary location if the item has no level yet.
-async function locationForItem(st, invItemId) {
+// Read the location that stocks an item AND its current on-hand there (uses read_inventory — no separate
+// locations-scope needed). The current on-hand is needed as `changeFromQuantity` on the set call.
+async function itemLevel(st, invItemId) {
   try {
-    const d = await storeGraphQL(st, `query($id:ID!){inventoryItem(id:$id){inventoryLevels(first:5){edges{node{location{id}}}}}}`, { id: invItemId });
+    const d = await storeGraphQL(st, `query($id:ID!){inventoryItem(id:$id){inventoryLevels(first:5){edges{node{location{id} quantities(names:["on_hand"]){name quantity}}}}}}`, { id: invItemId });
     const edges = d.inventoryItem?.inventoryLevels?.edges || [];
-    if (edges.length && edges[0].node?.location?.id) return edges[0].node.location.id;
+    if (edges.length && edges[0].node?.location?.id) { const n = edges[0].node; const q = (n.quantities || []).find((x) => x.name === "on_hand"); return { locId: n.location.id, onHand: q ? Number(q.quantity) : 0 }; }
   } catch (e) { /* fall through to the store default */ }
-  return await storeLocationId(st);
+  return { locId: await storeLocationId(st), onHand: 0 };
 }
 // Set Shopify on-hand to a counted quantity for a SKU, across every store that carries it.
 async function shopifySetOnHand(sku, qty) {
@@ -300,14 +300,14 @@ async function shopifySetOnHand(sku, qty) {
     const st = STORES.find((s) => s.brand === r.brand);
     if (!st || !r.inv_item_id) { out.push({ brand: r.brand, ok: false, error: "no Shopify inventory item on file" }); continue; }
     try {
-      const locId = await locationForItem(st, r.inv_item_id);
-      if (!locId) { out.push({ brand: r.brand, ok: false, error: "no fulfillment location" }); continue; }
+      const lvl = await itemLevel(st, r.inv_item_id);
+      if (!lvl.locId) { out.push({ brand: r.brand, ok: false, error: "no fulfillment location" }); continue; }
       const d = await storeGraphQL(st,
         `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input){ userErrors{field message} } }`,
-        { input: { reason: "correction", referenceDocumentUri: "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: r.inv_item_id, locationId: locId, quantity: Number(qty) }] } });
+        { input: { reason: "correction", referenceDocumentUri: "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: r.inv_item_id, locationId: lvl.locId, quantity: Number(qty), changeFromQuantity: lvl.onHand }] } });
       const ue = d.inventorySetOnHandQuantities?.userErrors || [];
       if (ue.length) { out.push({ brand: r.brand, ok: false, error: ue.map((x) => x.message).join("; ") }); }
-      else { out.push({ brand: r.brand, ok: true, from: r.on_hand, to: Number(qty) }); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [Number(qty), sku, r.brand]); }
+      else { out.push({ brand: r.brand, ok: true, from: lvl.onHand, to: Number(qty) }); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [Number(qty), sku, r.brand]); }
     } catch (e) { out.push({ brand: r.brand, ok: false, error: e.message }); }
   }
   return out;
