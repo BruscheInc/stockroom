@@ -82,6 +82,28 @@ async function migrate() {
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_hist_sku ON location_history(sku, ts DESC)`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
+  await db(`CREATE TABLE IF NOT EXISTS oos_cases (
+    id BIGSERIAL PRIMARY KEY,
+    order_number TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    item_name TEXT,
+    qty INTEGER,
+    unit_price NUMERIC,
+    item_value NUMERIC,
+    credit_value NUMERIC,
+    brand TEXT,
+    customer_name TEXT,
+    customer_email TEXT,
+    email_subject TEXT,
+    email_text TEXT,
+    status TEXT DEFAULT 'pending_approval',
+    resolution TEXT,
+    ticket_id TEXT,
+    created_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS ticket_id TEXT`);
 }
 
 /* --------------------------------------- Shopify (multi-store) --------------------------------------- */
@@ -348,7 +370,7 @@ async function buildPickList(rawCode) {
   for (const it of (order.items || [])) {
     if (!it || !it.sku || Number(it.quantity) === 0) continue;
     const k = it.sku;
-    if (!bySku[k]) bySku[k] = { sku: it.sku, name: it.name || "", qty: 0, ss_loc: String(it.warehouseLocation || "").trim() || null, image: it.imageUrl || null };
+    if (!bySku[k]) bySku[k] = { sku: it.sku, name: it.name || "", qty: 0, unit_price: Number(it.unitPrice) || 0, ss_loc: String(it.warehouseLocation || "").trim() || null, image: it.imageUrl || null };
     bySku[k].qty += Number(it.quantity) || 0;
     if (!bySku[k].ss_loc && it.warehouseLocation) bySku[k].ss_loc = String(it.warehouseLocation).trim();
   }
@@ -364,7 +386,7 @@ async function buildPickList(rawCode) {
       const f = (await shopifyFind({ sku })).filter((m) => !m.error);
       if (f.length) { on_hand = f.reduce((s, m) => s + (Number(m.qty) || 0), 0); title = f[0].title || title; image = f.find((m) => m.image)?.image || image; status = f[0].status || null; }
     } catch {}
-    return { sku, name: title, qty: base.qty, bin, on_hand, image, status };
+    return { sku, name: title, qty: base.qty, unit_price: base.unit_price, bin, on_hand, image, status };
   }));
   // Sort by bin (natural), items without a bin go last so the picker walks a route.
   items.sort((a, b) => {
@@ -376,9 +398,60 @@ async function buildPickList(rawCode) {
   return {
     found: true, order_number: order.orderNumber, order_status: order.orderStatus,
     brand: brandFromOrderNo(order.orderNumber), ship_to: (order.shipTo && order.shipTo.name) || null,
+    customer_email: order.customerEmail || null,
     order_date: order.orderDate || null, item_count: items.length,
     total_qty: items.reduce((s, i) => s + (i.qty || 0), 0), items,
   };
+}
+
+/* --------------------------------------- Out-of-stock → customer email --------------------------------------- */
+const money = (n) => "$" + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+function firstName(name) { const t = String(name || "").trim().split(/\s+/)[0]; return t && /^[A-Za-z]/.test(t) ? t : "there"; }
+// Build the full 3-option out-of-stock email (equal-value replacement / store credit +15% / refund).
+// The copy nudges toward replacement & credit since a refund is the least ideal outcome for us.
+function generateOosEmail({ brand, orderNumber, customerName, itemName, qty, unitPrice }) {
+  const value = Math.round((Number(unitPrice) || 0) * (Number(qty) || 1) * 100) / 100;
+  const credit = Math.round(value * 1.15 * 100) / 100;
+  const fn = firstName(customerName);
+  const b = brand || "our team";
+  const subject = `A quick update on your ${b} order #${orderNumber}`;
+  const text = [
+    `Hi ${fn},`, ``,
+    `Thank you so much for your order! I'm reaching out because one item is unexpectedly out of stock and won't be able to ship:`, ``,
+    `   • ${itemName}  (Qty ${qty}) — ${money(value)}`, ``,
+    `I'm so sorry for the inconvenience — I'd love to make this right. You've got a few options, so just reply and let me know which you'd prefer:`, ``,
+    `1) Equal-value replacement — pick any in-stock item(s) up to ${money(value)} and we'll send it in place of this one, at no extra charge.`, ``,
+    `2) Store credit + 15% extra — we'll add ${money(credit)} in store credit to your account. That's the full ${money(value)} value plus a 15% bonus for the trouble. It never expires and works on any future order.`, ``,
+    `3) A refund of ${money(value)} back to your original payment.`, ``,
+    `Most customers go with option 1 or 2 — you still get something you'll love, and the credit gives you a little extra to play with. Whichever you pick, just reply to this email and I'll take care of it right away.`, ``,
+    `Thanks so much for your patience, and for shopping with ${b}!`, ``,
+    `Warmly,`, `The ${b} Team`,
+  ].join("\n");
+  return { subject, text, item_value: value, credit_value: credit };
+}
+// Find one item on an order and assemble everything the OOS draft needs.
+async function oosContext(orderCode, sku) {
+  const pl = await buildPickList(orderCode);
+  if (!pl.found) return { found: false, code: orderCode };
+  const item = (pl.items || []).find((i) => String(i.sku).toLowerCase() === String(sku).toLowerCase());
+  if (!item) return { found: false, code: orderCode, no_item: true };
+  const draft = generateOosEmail({ brand: pl.brand, orderNumber: pl.order_number, customerName: pl.ship_to, itemName: item.name, qty: item.qty, unitPrice: item.unit_price });
+  return {
+    found: true, order_number: pl.order_number, brand: pl.brand, customer_name: pl.ship_to, customer_email: pl.customer_email,
+    item: { sku: item.sku, name: item.name, qty: item.qty, unit_price: item.unit_price, bin: item.bin, on_hand: item.on_hand },
+    ...draft,
+  };
+}
+
+/* --------------------------------------- Slack (notify Jose) --------------------------------------- */
+const SLACK_TOKEN = process.env.SLACK_BOT_TOKEN || "";
+const OOS_CHANNEL = process.env.OOS_CHANNEL || process.env.CS_CHANNEL || "";
+function slackPost(text) {
+  if (!SLACK_TOKEN || !OOS_CHANNEL) return Promise.resolve({ ok: false, skipped: true });
+  return fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST", headers: { Authorization: `Bearer ${SLACK_TOKEN}`, "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ channel: OOS_CHANNEL, text }),
+  }).then((r) => r.json()).catch(() => ({ ok: false }));
 }
 
 // Resolve a scanned code → an item or a bin.
@@ -449,6 +522,42 @@ app.get("/api/order", async (req, res) => {
   if (!guard(req, res)) return;
   try { res.json(await buildPickList(req.query.code)); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Out of stock — preview the drafted customer email for one item on an order.
+app.get("/api/oos/preview", async (req, res) => {
+  if (!guard(req, res)) return;
+  try { res.json(await oosContext(req.query.order, req.query.sku)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Out of stock — record the case (with the approved/edited draft) and notify Jose in Slack for approval.
+app.post("/api/oos/create", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { order, sku, subject, text } = req.body || {};
+    if (!order || !sku) return res.status(400).json({ error: "order and sku required" });
+    const ctx = await oosContext(order, sku);
+    if (!ctx.found) return res.status(404).json({ error: ctx.no_item ? "item not on that order" : "order not found" });
+    const subj = (subject && String(subject).trim()) || ctx.subject;
+    const body = (text && String(text).trim()) || ctx.text;
+    const by = actorOf(req);
+    const ins = await db(
+      `INSERT INTO oos_cases (order_number,sku,item_name,qty,unit_price,item_value,credit_value,brand,customer_name,customer_email,email_subject,email_text,status,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',$13) RETURNING id`,
+      [ctx.order_number, ctx.item.sku, ctx.item.name, ctx.item.qty, ctx.item.unit_price, ctx.item_value, ctx.credit_value, ctx.brand, ctx.customer_name, ctx.customer_email, subj, body, by]
+    );
+    const caseId = ins.rows[0].id;
+    // The case row IS the hand-off: Emily polls oos_cases and posts the Slack approval card
+    // (Apply = send to the customer). We don't post to Slack here — Emily is the single voice.
+    res.json({ ok: true, case_id: caseId, queued: true, subject: subj, text: body, item_value: ctx.item_value, credit_value: ctx.credit_value });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Out of stock — recent cases (for a future review view).
+app.get("/api/oos/cases", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`SELECT id,order_number,sku,item_name,item_value,credit_value,brand,customer_name,status,resolution,created_by,created_at FROM oos_cases ORDER BY created_at DESC LIMIT 100`);
+    res.json({ cases: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Full item detail by SKU.
 app.get("/api/item/:sku", async (req, res) => {
