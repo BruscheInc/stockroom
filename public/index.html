@@ -179,6 +179,9 @@
 /* ---------- key / state ---------- */
 const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("key"); if(u){localStorage.setItem("sk_key",u);return u;} return localStorage.getItem("sk_key")||""; }catch(e){ return ""; } })();
 const $ = (id)=>document.getElementById(id);
+// Touch devices (phones/tablets): don't force-hold focus on the scan box, or iOS keeps its keyboard
+// toolbar ("Done" bar) on screen. Camera is the primary input here; tap the box only when typing.
+const IS_TOUCH = (window.matchMedia && matchMedia("(pointer:coarse)").matches) || ("ontouchstart" in window);
 function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; try{localStorage.setItem("sk_key",v);}catch(e){} location.href=location.pathname+"?key="+encodeURIComponent(v); }
 function signOut(){ try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
 let CURRENT_USER="";
@@ -217,12 +220,12 @@ function showTab(t){
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
   if(t==="scan") setTimeout(keepFocus,50);
-  if(t==="order") setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
+  if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
 }
 
 /* ---------- keyboard-wedge (scanner gun) ---------- */
 // The #scan box stays focused so a scanner gun types into it and its trailing Enter fires a lookup.
-function keepFocus(){ const s=$("scan"); if(!s) return; if(document.activeElement!==s && !$("tab-scan").classList.contains("hidden")) s.focus(); }
+function keepFocus(){ if(IS_TOUCH) return; const s=$("scan"); if(!s) return; if(document.activeElement!==s && !$("tab-scan").classList.contains("hidden")) s.focus(); }
 document.addEventListener("click",(e)=>{ if(e.target.closest("input,button,a")) return; keepFocus(); });
 $("scan").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); submitScan(); } });
 async function submitScan(){ const code=$("scan").value.trim(); if(!code)return; $("scan").value="";
