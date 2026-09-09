@@ -30,7 +30,7 @@
   .btn.ghost{background:transparent;color:var(--accent2);border:1px solid var(--line)}
   .btn:active{transform:translateY(1px)}
   .btn.wide{width:100%;padding:14px;border-radius:12px}
-  #reader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px;display:none;background:#000}
+  #reader,#oreader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px;display:none;background:#000}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
   .muted{color:var(--muted)} .mono{font-family:var(--mono)}
   .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
@@ -150,10 +150,23 @@
     </div>
     <div id="searchres" class="card"><div class="muted center">Type a product name or SKU to search all stores.</div></div>
   </section>
+
+  <!-- PICK LIST TAB -->
+  <section id="tab-order" class="hidden">
+    <div class="scanbar">
+      <input id="orderScan" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
+      <button class="btn" onclick="submitOrder()">Go</button>
+    </div>
+    <button class="btn blue wide" id="ocamBtn" onclick="toggleOrderCamera()">📷 Scan packing-slip barcode</button>
+    <div id="oreader"></div>
+    <div class="note" id="orderNote">Scan the barcode at the bottom of a packing slip, or type the order number, to see where every item is and how many to pick.</div>
+    <div id="orderResult"></div>
+  </section>
 </div>
 
 <nav class="tabs">
   <button id="nav-scan" class="on" onclick="showTab('scan')"><span class="i">🔍</span>Scan</button>
+  <button id="nav-order" onclick="showTab('order')"><span class="i">🧾</span>Pick List</button>
   <button id="nav-bins" onclick="showTab('bins')"><span class="i">🗄️</span>Bins</button>
   <button id="nav-search" onclick="showTab('search')"><span class="i">📋</span>Items</button>
 </nav>
@@ -185,7 +198,7 @@ else {
       CURRENT_USER = role.user || "";
       $("appwrap").classList.remove("hidden");
       $("whoName").textContent = CURRENT_USER;
-      if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
+      if("serviceWorker" in navigator){ let _r=false; navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(_r)return; _r=true; location.reload(); }); window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
       keepFocus(); loadBins();
       // Live freshness: refresh the Bins list / open bin view so changes others save appear automatically.
       setInterval(liveRefresh, 15000);
@@ -200,9 +213,11 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","bins","search"]){ $("tab-"+x).classList.toggle("hidden",x!==t); $("nav-"+x).classList.toggle("on",x===t); }
+  for(const x of ["scan","order","bins","search"]){ $("tab-"+x).classList.toggle("hidden",x!==t); $("nav-"+x).classList.toggle("on",x===t); }
+  if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
   if(t==="scan") setTimeout(keepFocus,50);
+  if(t==="order") setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
 }
 
 /* ---------- keyboard-wedge (scanner gun) ---------- */
@@ -216,23 +231,26 @@ async function submitScan(){ const code=$("scan").value.trim(); if(!code)return;
   await lookup(code); }
 
 /* ---------- camera scanning ---------- */
-let html5qr=null, camOn=false;
-// Start the camera; on a successful scan, run onDetect(code). Used by the main scanner AND the bin "add" box.
-async function startCamera(onDetect){
+let html5qr=null, camOn=false, camReader="reader", camBtnId="camBtn", camStartText="📷 Scan with camera";
+// Start the camera; on a successful scan, run onDetect(code). opts: {reader, btn, startText, stopText, note}.
+async function startCamera(onDetect, opts){
+  opts=opts||{};
   if(camOn) stopCamera();
-  $("reader").style.display="block"; $("camBtn").textContent="✕ Stop camera";
-  try{ $("reader").scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
+  camReader=opts.reader||"reader"; camBtnId=opts.btn||"camBtn"; camStartText=opts.startText||"📷 Scan with camera";
+  $(camReader).style.display="block"; if($(camBtnId)) $(camBtnId).textContent=opts.stopText||"✕ Stop camera";
+  try{ $(camReader).scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
   try{
-    html5qr = new Html5Qrcode("reader",{ verbose:false });
+    html5qr = new Html5Qrcode(camReader,{ verbose:false });
     await html5qr.start({facingMode:"environment"}, { fps:12, qrbox:{width:260,height:180} },
       (txt)=>{ navigator.vibrate&&navigator.vibrate(60); stopCamera(); onDetect(txt.trim()); },
       ()=>{});
     camOn=true;
-  }catch(e){ $("scanNote").textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
+  }catch(e){ const n=$(opts.note||"scanNote"); if(n) n.textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
 }
 function toggleCamera(){ if(camOn){ stopCamera(); return; } startCamera(lookup); }
+function toggleOrderCamera(){ if(camOn){ stopCamera(); return; } startCamera(loadOrder,{reader:"oreader",btn:"ocamBtn",startText:"📷 Scan packing-slip barcode",stopText:"✕ Stop camera",note:"orderNote"}); }
 function scanIntoBin(bin){ startCamera((code)=>addToBinCode(bin, code)); }
-function stopCamera(){ $("camBtn").textContent="📷 Scan with camera"; $("reader").style.display="none";
+function stopCamera(){ if($(camBtnId)) $(camBtnId).textContent=camStartText; if($(camReader)) $(camReader).style.display="none";
   if(html5qr){ html5qr.stop().then(()=>html5qr.clear()).catch(()=>{}); } camOn=false; }
 
 /* ---------- lookup / render ---------- */
@@ -244,6 +262,7 @@ async function lookup(code){
   let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); }catch(e){ return; }
   if(d.type==="item") renderItem(d);
   else if(d.type==="bin") renderBin(d);
+  else if(d.type==="order") renderOrder(d, $("result"));
   else if(d.type==="unknown") renderUnknown(d);
   else $("result").innerHTML='<div class="card center muted">Nothing scanned.</div>';
 }
@@ -460,6 +479,75 @@ function renderFind(){
       <td class="n"><b>${it.qty==null?"—":it.qty}</b></td>
       <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
     '</tbody></table>';
+}
+
+/* ---------- pick list (scan an order barcode → digital packing list) ---------- */
+function submitOrder(){ const code=$("orderScan").value.trim(); if(!code) return; loadOrder(code); }
+async function loadOrder(code){
+  code=String(code||"").trim(); if(!code) return;
+  $("orderScan").value=code;
+  $("orderResult").innerHTML='<div class="card center muted">Looking up order <span class="mono">'+esc(code)+'</span>…</div>';
+  let d; try{ d=await api("/api/order?code="+encodeURIComponent(code)); }catch(e){ $("orderResult").innerHTML='<div class="card center muted">Lookup failed.</div>'; return; }
+  renderOrder(d, $("orderResult"));
+}
+let lastOrder=null;
+function renderOrder(d, mount){
+  const el = mount || $("orderResult");
+  if(!d || !d.found){
+    el.innerHTML=`<div class="card center"><p class="title">Order not found</p><div class="sub mono">${esc((d&&d.code)||"")}</div>
+      <p class="muted">No ShipStation order matches that number. Check the barcode, or type the order number (e.g. LBO8958).</p></div>`;
+    return;
+  }
+  lastOrder=d;
+  const rows=d.items.map(it=>{
+    const binCell = it.bin
+      ? tokens(it.bin).map(bn=>`<span class="pill bin" style="margin:2px 4px 2px 0">📍 ${esc(bn)}</span>`).join("")
+      : `<span class="pill nobin">no bin</span>`;
+    const oh = it.on_hand==null ? '<span class="muted">—</span>' : `<b>${it.on_hand}</b>`;
+    return `<tr onclick="lookup('${esc(it.sku)}')" style="cursor:pointer">
+      <td>${binCell}</td>
+      <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div></td>
+      <td class="n"><span class="big" style="font-size:22px">${it.qty}</span></td>
+      <td class="n">${oh}</td>
+    </tr>`;
+  }).join("");
+  const noBin=d.items.filter(i=>!i.bin).length;
+  el.innerHTML=`
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="pill bin" style="font-size:16px">🧾 ${esc(d.order_number)}</span>
+        ${d.brand?`<span class="sub">${esc(d.brand)}</span>`:""}
+        <div style="flex:1"></div>
+        <button class="btn sec" onclick="printOrder()">🖨️ Print</button>
+      </div>
+      <div class="row" style="margin-top:10px"><span class="k">Ship to</span><span class="v">${esc(d.ship_to||"—")}</span></div>
+      <div class="row"><span class="k">Status</span><span class="v">${esc((d.order_status||"—").replace(/_/g," "))}</span></div>
+      <div class="row"><span class="k">Items · total to pick</span><span class="v">${d.item_count} · ${d.total_qty}</span></div>
+      ${noBin?`<div class="note" style="color:var(--warn)">⚠️ ${noBin} item${noBin>1?"s have":" has"} no bin assigned — tap the row to set one.</div>`:""}
+    </div>
+    <div class="card">
+      <div class="sectlabel" style="margin-top:0">Pick list — sorted by bin</div>
+      <table><thead><tr><th>Bin</th><th>Item</th><th class="n">Pick</th><th class="n">On hand</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="note">Tap any row to open the item, adjust its bin, or see history.</div>
+    </div>`;
+}
+function printOrder(){
+  const d=lastOrder; if(!d) return;
+  const pa=$("printArea");
+  pa.innerHTML=`<div style="font-family:sans-serif;color:#000;background:#fff">
+    <h2 style="margin:0 0 4px">Pick List — ${esc(d.order_number)}</h2>
+    <div style="color:#333;margin-bottom:12px">${esc(d.brand||"")}${d.ship_to?` · Ship to ${esc(d.ship_to)}`:""} · ${d.item_count} items / ${d.total_qty} to pick</div>
+    <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <thead><tr>${["Bin","Item","SKU","Pick"].map(h=>`<th style="text-align:left;border-bottom:2px solid #000;padding:7px 6px">${h}</th>`).join("")}</tr></thead>
+      <tbody>${d.items.map(it=>`<tr>
+        <td style="padding:7px 6px;border-bottom:1px solid #ccc;font-weight:700">${esc(it.bin||"—")}</td>
+        <td style="padding:7px 6px;border-bottom:1px solid #ccc">${esc(it.name||"")}</td>
+        <td style="padding:7px 6px;border-bottom:1px solid #ccc;font-family:monospace">${esc(it.sku)}</td>
+        <td style="padding:7px 6px;border-bottom:1px solid #ccc;text-align:right;font-weight:700">${it.qty}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+  pa.style.display="block";
+  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; }, 800); }, 300);
 }
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
