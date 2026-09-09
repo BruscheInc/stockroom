@@ -805,15 +805,18 @@ app.get("/api/stock/list", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const q = String(req.query.q || "").trim(), brand = String(req.query.brand || "").trim();
+    const qtyMin = req.query.qtyMin !== undefined && req.query.qtyMin !== "" ? Number(req.query.qtyMin) : null;
     const qtyMax = req.query.qtyMax !== undefined && req.query.qtyMax !== "" ? Number(req.query.qtyMax) : null;
+    const status = String(req.query.status || "").trim().toUpperCase(); // ACTIVE / DRAFT / ARCHIVED / ALL
     const vop = String(req.query.vop || "any").toLowerCase(), vdate = String(req.query.vdate || "").trim();
-    const disc = req.query.disc === "1", nobin = req.query.nobin === "1", includeArchived = req.query.archived === "1";
+    const disc = req.query.disc === "1", nobin = req.query.nobin === "1";
     const sort = String(req.query.sort || "onhand_asc").toLowerCase();
     const limit = Math.min(Number(req.query.limit) || 300, 1000), offset = Number(req.query.offset) || 0;
     const where = [], p = [];
-    if (!includeArchived) where.push(`(si.status IS NULL OR si.status<>'ARCHIVED')`);
+    if (status && status !== "ALL") { p.push(status); where.push(`upper(coalesce(si.status,'')) = $${p.length}`); }
     if (q) { p.push(`%${q.toLowerCase()}%`); where.push(`(lower(si.sku) LIKE $${p.length} OR lower(coalesce(si.title,'')) LIKE $${p.length})`); }
     if (brand) { p.push(brand); where.push(`si.brand = $${p.length}`); }
+    if (qtyMin !== null && Number.isFinite(qtyMin)) { p.push(qtyMin); where.push(`si.on_hand IS NOT NULL AND si.on_hand >= $${p.length}`); }
     if (qtyMax !== null && Number.isFinite(qtyMax)) { p.push(qtyMax); where.push(`si.on_hand IS NOT NULL AND si.on_hand <= $${p.length}`); }
     if (disc) where.push(`sv.matched = false`);
     if (nobin) where.push(`(il.bin IS NULL OR il.bin = '')`);
