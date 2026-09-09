@@ -253,9 +253,10 @@ let invSync = { running: false, synced: 0, at: null, error: null };
 async function syncShopifyInventory() {
   if (invSync.running) return { running: true, synced: invSync.synced };
   invSync = { running: true, synced: 0, at: new Date().toISOString(), error: null };
-  let total = 0;
-  try {
-    for (const st of STORES) {
+  let total = 0; const errors = [];
+  // Sync each store independently — one store missing a scope must NOT block the others.
+  for (const st of STORES) {
+    try {
       let cursor = null, has = true, guard = 0;
       while (has && guard++ < 500) {
         const d = await storeGraphQL(st, INV_SYNC_QUERY, { cursor });
@@ -274,13 +275,10 @@ async function syncShopifyInventory() {
         invSync.synced = total;
         if (has) await new Promise((r) => setTimeout(r, 300)); // stay under Shopify's cost limit
       }
-    }
-    invSync = { running: false, synced: total, at: new Date().toISOString(), error: null };
-    return { ok: true, synced: total };
-  } catch (e) {
-    invSync = { running: false, synced: total, at: new Date().toISOString(), error: e.message };
-    return { error: e.message, synced: total };
+    } catch (e) { errors.push(`${st.brand}: ${e.message.slice(0, 140)}`); console.error(`📊 inventory sync ${st.brand} failed:`, e.message); }
   }
+  invSync = { running: false, synced: total, at: new Date().toISOString(), error: errors.length ? errors.join(" | ") : null };
+  return { ok: true, synced: total, errors };
 }
 // Set Shopify on-hand to a counted quantity for a SKU, across every store that carries it.
 async function shopifySetOnHand(sku, qty) {
