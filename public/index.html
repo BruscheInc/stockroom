@@ -233,7 +233,7 @@
         <label>Brand</label>
         <select id="vbrand"><option value="">All</option><option>Larkspur Baby</option><option>Larkspur Baby Outlet</option><option>Bumbunny Baby</option></select>
         <label style="margin-left:auto">Verified</label>
-        <select id="vop"><option value="any">Any</option><option value="never">Never</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
+        <select id="vop"><option value="never" selected>Never counted</option><option value="any">Any</option><option value="before">Before</option><option value="after">After</option><option value="on">On</option></select>
         <input id="vdate" type="date">
       </div>
       <div class="vrow">
@@ -753,7 +753,7 @@ function renderStockPager(){
     <div class="muted" style="font-size:12px;margin-top:7px;text-align:center">${from}–${to} of ${stockTotal} · page ${cur+1} of ${pages}</div>
   </div>`;
 }
-function clearStockFilters(){ $("vq").value="";$("vqtymin").value="";$("vqty").value="";$("vstatus").value="ALL";$("vbrand").value="";$("vop").value="any";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
+function clearStockFilters(){ $("vq").value="";$("vqtymin").value="";$("vqty").value="";$("vstatus").value="ACTIVE";$("vbrand").value="";$("vop").value="never";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
 function renderStockRow(it){
   const oh=it.on_hand; const ohc=oh===0?"zero":(oh!=null&&oh<=3?"low":"");
   let badge;
@@ -788,7 +788,7 @@ async function openVerify(sku){
     </div>
     <div class="note" style="text-align:left;margin:0 0 8px">${last}</div>
     <div class="sectlabel" style="margin-top:0">Physical count on the shelf</div>
-    <input id="vcount" type="text" inputmode="numeric" placeholder="Enter the number you counted" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
+    <input id="vcount" type="text" inputmode="numeric" placeholder="Count" style="font-size:34px;font-weight:800;text-align:center;padding:14px;height:auto" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
     <div id="vkeypad" class="keypad hidden">
       ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="vpad('${n}')">${n}</button>`).join("")}
       <button type="button" class="wide" onclick="vpadClear()">Clear</button>
