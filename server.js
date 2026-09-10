@@ -824,7 +824,7 @@ app.get("/api/stock/list", async (req, res) => {
     const vop = String(req.query.vop || "any").toLowerCase(), vdate = String(req.query.vdate || "").trim();
     const disc = req.query.disc === "1", nobin = req.query.nobin === "1";
     const sort = String(req.query.sort || "onhand_asc").toLowerCase();
-    const limit = Math.min(Number(req.query.limit) || 300, 1000), offset = Number(req.query.offset) || 0;
+    const limit = Math.min(Number(req.query.limit) || 500, 2000), offset = Number(req.query.offset) || 0;
     const where = [], p = [];
     if (status && status !== "ALL") { p.push(status); where.push(`upper(coalesce(si.status,'')) = $${p.length}`); }
     if (q) { p.push(`%${q.toLowerCase()}%`); where.push(`(lower(si.sku) LIKE $${p.length} OR lower(coalesce(si.title,'')) LIKE $${p.length})`); }
@@ -836,15 +836,17 @@ app.get("/api/stock/list", async (req, res) => {
     if (vop === "never") where.push(`sv.verified_at IS NULL`);
     else if (["before", "after", "on"].includes(vop) && vdate) { p.push(vdate); const op = vop === "before" ? "<" : vop === "after" ? ">" : "="; where.push(`sv.verified_at IS NOT NULL AND sv.verified_at::date ${op} $${p.length}::date`); }
     const orderBy = sort === "onhand_desc" ? "si.on_hand DESC NULLS LAST" : sort === "verified_old" ? "sv.verified_at ASC NULLS FIRST" : sort === "verified_new" ? "sv.verified_at DESC NULLS LAST" : sort === "title" ? "si.title ASC" : "si.on_hand ASC NULLS FIRST";
-    const sql = `SELECT si.sku, si.brand, si.title, si.variant, si.on_hand, si.status,
-        sv.verified_at, sv.verified_by, sv.counted_qty, sv.system_qty, sv.matched, sv.corrected, il.bin
-      FROM stock_items si
+    const joinWhere = `FROM stock_items si
       LEFT JOIN stock_verifications sv ON sv.sku = si.sku
       LEFT JOIN item_location il ON il.sku = si.sku
-      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}`;
+    const total = (await db(`SELECT COUNT(*)::int n ${joinWhere}`, p)).rows[0].n;
+    const sql = `SELECT si.sku, si.brand, si.title, si.variant, si.on_hand, si.status,
+        sv.verified_at, sv.verified_by, sv.counted_qty, sv.system_qty, sv.matched, sv.corrected, il.bin
+      ${joinWhere}
       ORDER BY ${orderBy}, si.sku LIMIT ${limit} OFFSET ${offset}`;
     const r = await db(sql, p);
-    res.json({ items: r.rows, count: r.rows.length, offset, limit });
+    res.json({ items: r.rows, count: r.rows.length, total, offset, limit });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // One SKU's verification detail + history.
