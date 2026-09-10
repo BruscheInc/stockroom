@@ -788,7 +788,7 @@ async function openVerify(sku){
     </div>
     <div class="note" style="text-align:left;margin:0 0 8px">${last}</div>
     <div class="sectlabel" style="margin-top:0">Physical count on the shelf</div>
-    <input id="vcount" type="text" inputmode="numeric" placeholder="Count" style="font-size:34px;font-weight:800;text-align:center;padding:14px;height:auto" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
+    <input id="vcount" type="text" inputmode="numeric" placeholder="Count" style="width:100%;box-sizing:border-box;font-size:34px;font-weight:800;text-align:center;padding:14px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
     <div id="vkeypad" class="keypad hidden">
       ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="vpad('${n}')">${n}</button>`).join("")}
       <button type="button" class="wide" onclick="vpadClear()">Clear</button>
