@@ -103,6 +103,12 @@
   .stat{flex:1;min-width:64px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
   .stat .n{font-size:19px;font-weight:800}.stat .l{font-size:10.5px;color:var(--muted)}
   .stat.warn .n{color:var(--warn)}.stat.bad .n{color:var(--bad)}
+  .pager{padding:14px 4px 4px}
+  .pgrow{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center}
+  .pgbtn{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}
+  .pgbtn.on{background:var(--accent);border-color:var(--accent);color:#04121f}
+  .pgbtn:disabled{opacity:.4;cursor:default}
+  .pgell{color:var(--muted);padding:0 2px}
   .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
   .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .vrow label{font-size:12px;color:var(--muted)}
@@ -716,13 +722,32 @@ async function loadStockSummary(){
     else if(b) b.textContent="📊 Sync";
   }catch(e){}
 }
-async function loadStockList(){
+const STOCK_PAGE=100; let stockPage=0, stockTotal=0;
+async function loadStockList(page){
+  if(typeof page!=="number"||page<0) page=0;   // filter change / refresh → back to page 1
+  stockPage=page;
   const el=$("vlist");
-  try{ const d=await api("/api/stock/list?"+stockParams());
-    const items=d.items||[];
-    if(!items.length){ el.innerHTML='<div class="muted center">No items match these filters.'+(($("vq").value||$("vqty").value)?' <a href="#" onclick="clearStockFilters();return false" style="color:var(--accent2)">clear</a>':'')+'</div>'; return; }
-    el.innerHTML=items.map(renderStockRow).join("")+(items.length>=d.limit?`<div class="muted center" style="padding:10px">Showing first ${d.limit} — narrow with filters.</div>`:"");
+  el.innerHTML='<div class="muted center" style="padding:10px">Loading…</div>';
+  try{
+    const d=await api("/api/stock/list?"+stockParams()+"&limit="+STOCK_PAGE+"&offset="+(page*STOCK_PAGE));
+    const items=d.items||[]; stockTotal=(d.total!=null)?d.total:(page*STOCK_PAGE+items.length);
+    if(!stockTotal){ el.innerHTML='<div class="muted center">No items match these filters.'+(($("vq").value||$("vqty").value)?' <a href="#" onclick="clearStockFilters();return false" style="color:var(--accent2)">clear</a>':'')+'</div>'; return; }
+    el.innerHTML=items.map(renderStockRow).join("")+renderStockPager();
   }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load — is the inventory synced yet? Tap 📊 Sync.</div>'; }
+}
+function renderStockPager(){
+  const pages=Math.max(1,Math.ceil(stockTotal/STOCK_PAGE)), cur=stockPage;
+  const from=cur*STOCK_PAGE+1, to=Math.min(stockTotal,(cur+1)*STOCK_PAGE);
+  if(pages<=1) return `<div class="pager"><div class="muted" style="font-size:12px;text-align:center">${stockTotal} item${stockTotal===1?"":"s"}</div></div>`;
+  const btn=(p,label,o)=>`<button class="pgbtn${o&&o.active?" on":""}"${o&&o.disabled?" disabled":""} onclick="loadStockList(${p})">${label!=null?label:(p+1)}</button>`;
+  const nums=[], win=1, start=Math.max(0,cur-win), end=Math.min(pages-1,cur+win);
+  if(start>0){ nums.push(btn(0)); if(start>1) nums.push('<span class="pgell">…</span>'); }
+  for(let p=start;p<=end;p++) nums.push(btn(p,null,{active:p===cur}));
+  if(end<pages-1){ if(end<pages-2) nums.push('<span class="pgell">…</span>'); nums.push(btn(pages-1)); }
+  return `<div class="pager">
+    <div class="pgrow">${btn(cur-1,"‹",{disabled:cur<=0})}${nums.join("")}${btn(cur+1,"›",{disabled:cur>=pages-1})}</div>
+    <div class="muted" style="font-size:12px;margin-top:7px;text-align:center">${from}–${to} of ${stockTotal} · page ${cur+1} of ${pages}</div>
+  </div>`;
 }
 function clearStockFilters(){ $("vq").value="";$("vqtymin").value="";$("vqty").value="";$("vstatus").value="ALL";$("vbrand").value="";$("vop").value="any";$("vdate").value="";$("vdisc").checked=false;$("vnobin").checked=false;loadStockList(); }
 function renderStockRow(it){
@@ -780,7 +805,7 @@ async function submitVerify(sku){
     else if(r.corrected) msg=`Corrected Shopify → ${r.counted}`;
     else { msg=`Counted ${r.counted} · ⚠️ Shopify not updated`; bad=true; }
     toast(msg, bad);
-    loadStockList(); loadStockSummary();
+    loadStockList(stockPage); loadStockSummary();
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
 async function syncInventory(){
