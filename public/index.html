@@ -109,6 +109,10 @@
   .pgbtn.on{background:var(--accent);border-color:var(--accent);color:#04121f}
   .pgbtn:disabled{opacity:.4;cursor:default}
   .pgell{color:var(--muted);padding:0 2px}
+  .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .keypad button{padding:18px 0;font-size:21px;font-weight:800;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;-webkit-user-select:none;user-select:none}
+  .keypad button:active{background:var(--accent);color:#052012}
+  .keypad button.wide{font-size:15px;font-weight:700;color:var(--muted)}
   .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
   .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .vrow label{font-size:12px;color:var(--muted)}
@@ -784,15 +788,29 @@ async function openVerify(sku){
     </div>
     <div class="note" style="text-align:left;margin:0 0 8px">${last}</div>
     <div class="sectlabel" style="margin-top:0">Physical count on the shelf</div>
-    <input id="vcount" type="number" min="0" inputmode="numeric" placeholder="Enter the number you counted" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
+    <input id="vcount" type="text" inputmode="numeric" placeholder="Enter the number you counted" onkeydown="if(event.key==='Enter')submitVerify('${esc(sku)}')">
+    <div id="vkeypad" class="keypad hidden">
+      ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="vpad('${n}')">${n}</button>`).join("")}
+      <button type="button" class="wide" onclick="vpadClear()">Clear</button>
+      <button type="button" onclick="vpad('0')">0</button>
+      <button type="button" onclick="vpadDel()">⌫</button>
+    </div>
     <div class="moverow" style="margin-top:10px">
       <button class="btn sec" onclick="closeVerify()">Cancel</button>
       <button class="btn" style="flex:1" onclick="submitVerify('${esc(sku)}')">Save verification</button>
     </div>
     <div class="note">If your count differs, Shopify inventory is corrected to match it. Recorded under <b>${esc(whoName()||"you")}</b>, ${fmtD(Date.now())}.</div>
     ${(d.history&&d.history.length)?`<div class="sectlabel">History</div><div class="hist">${d.history.map(h=>`<div class="h"><span>counted <b>${h.counted_qty}</b> vs ${h.system_qty==null?"—":h.system_qty}${h.corrected?' <span style="color:var(--accent)">· corrected</span>':""}</span><span class="muted">${esc(h.user_name||"")} · ${fmt(h.ts)}</span></div>`).join("")}</div>`:""}`;
-  setTimeout(()=>{const c=$("vcount");if(c)c.focus();},60);
+  // On touch (phones), a paired Bluetooth scanner makes iOS SUPPRESS the on-screen keyboard for every
+  // field — you only get the "Done" bar. So on touch we show our own number pad and make the field
+  // read-only (no futile iOS focus). On desktop, use the real keyboard and auto-focus.
+  const c=$("vcount");
+  if(IS_TOUCH){ if(c) c.setAttribute("readonly","readonly"); const kp=$("vkeypad"); if(kp) kp.classList.remove("hidden"); }
+  else if(c) setTimeout(()=>c.focus(),60);
 }
+function vpad(d){ const c=$("vcount"); if(!c) return; if((c.value||"").length<6) c.value=(c.value||"")+d; }
+function vpadDel(){ const c=$("vcount"); if(c) c.value=(c.value||"").slice(0,-1); }
+function vpadClear(){ const c=$("vcount"); if(c) c.value=""; }
 function closeVerify(){ $("verifyModal").classList.remove("show"); }
 async function submitVerify(sku){
   const c=$("vcount"); const v=c?c.value.trim():""; if(v===""){ toast("Enter a count",true); return; }
