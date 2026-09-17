@@ -253,6 +253,20 @@
     </div>
     <div id="vlist" class="card"><div class="muted center">Loading…</div></div>
   </section>
+
+  <section id="tab-strays" class="hidden">
+    <div class="card" style="margin-bottom:10px">
+      <div class="sectlabel" style="margin-top:0">🔄 Strays — put back</div>
+      <div class="note" style="text-align:left;margin:0 0 10px">Wrong picks, found items, or sellable returns going back into bins. Scan or type the item, then put it back. Items under 3 on hand must be recounted so the number stays exact.</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="strayScan" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
+        <button class="btn" id="strayGoBtn" onclick="strayLookup()">Find</button>
+      </div>
+      <div id="strayResults"></div>
+    </div>
+    <div class="sectlabel">Recent put-backs</div>
+    <div id="strayList" class="card"><div class="muted center">Loading…</div></div>
+  </section>
 </div>
 
 <nav class="tabs">
@@ -266,6 +280,7 @@
 <div class="toast" id="toast"></div>
 <div class="modal" id="oosModal"><div class="box" id="oosBox"></div></div>
 <div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
+<div class="modal" id="putbackModal"><div class="box" id="putbackBox"></div></div>
 <div class="drawer" id="drawer">
   <div class="scrim" onclick="closeMenu()"></div>
   <div class="panel">
@@ -275,6 +290,7 @@
     <button class="menuitem" data-tab="scan" onclick="menuGo('scan')"><span class="i">🔍</span> Scan</button>
     <button class="menuitem" data-tab="order" onclick="menuGo('order')"><span class="i">🧾</span> Pick List</button>
     <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><span class="i">📊</span> Stock Verification</button>
+    <button class="menuitem" data-tab="strays" onclick="menuGo('strays')"><span class="i">🔄</span> Strays</button>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
     <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
     <div class="menusec">Actions</div>
@@ -327,13 +343,14 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","verify","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
   if(t==="scan") setTimeout(keepFocus,50);
   if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
   if(t==="verify"){ loadStockSummary(); loadStockList(); }
+  if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
 function closeMenu(){ $("drawer").classList.remove("show"); }
@@ -824,6 +841,103 @@ async function submitVerify(sku){
     else { msg=`Counted ${r.counted} · ⚠️ Shopify not updated`; bad=true; }
     toast(msg, bad);
     loadStockList(stockPage); loadStockSummary();
+  }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
+}
+/* ---------- Strays / put back ---------- */
+let PB_QTY=1;
+async function loadStrays(){
+  const el=$("strayList"); if(!el) return;
+  try{
+    const d=await api("/api/stock/strays"); const rows=d.strays||[];
+    if(!rows.length){ el.innerHTML='<div class="muted center">No put-backs yet.</div>'; return; }
+    el.innerHTML=rows.map(s=>`<div class="row" style="align-items:flex-start;gap:10px">
+      <div class="meta" style="flex:1;min-width:0">
+        <div class="vname">${esc(s.title||s.sku)}</div>
+        <div class="vsub"><span class="mono">${esc(s.sku)}</span>${s.bin?` · 📍 ${esc(s.bin)}`:""} · back <b>${s.qty}</b>${s.verified?` · <span style="color:var(--accent)">recount ${s.counted_qty}</span>`:""}</div>
+      </div>
+      <div class="vsub" style="text-align:right;flex:none">${esc(s.user_name||"")}<br>${fmt(s.ts)}</div>
+    </div>`).join("");
+  }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load.</div>'; }
+}
+async function strayLookup(){
+  const inp=$("strayScan"); const term=(inp?inp.value:"").trim();
+  const res=$("strayResults"); if(res) res.innerHTML="";
+  if(term.length<2){ toast("Scan or type an item",true); return; }
+  // exact SKU / barcode first
+  try{ const d=await api("/api/resolve?code="+encodeURIComponent(term));
+    if(d && d.type==="item" && d.sku){ if(inp) inp.value=""; openPutback(d.sku); return; }
+  }catch(e){}
+  // otherwise search by SKU / name
+  try{ const d=await api("/api/stock/list?limit=25&status=ALL&vop=any&q="+encodeURIComponent(term));
+    const seen={}, items=(d.items||[]).filter(it=> seen[it.sku]?false:(seen[it.sku]=true));
+    if(!items.length){ if(res) res.innerHTML='<div class="muted center" style="padding:10px">No matches.</div>'; return; }
+    if(items.length===1){ if(inp) inp.value=""; openPutback(items[0].sku); return; }
+    if(res) res.innerHTML='<div class="vsub" style="margin:8px 2px 4px">'+items.length+' matches — pick one:</div>'+items.map(it=>{
+      const lo=it.on_hand!=null&&it.on_hand<3, z=it.on_hand===0;
+      return `<button class="menuitem" style="width:100%;border:1px solid var(--line);margin-bottom:6px;border-radius:10px" onclick="openPutback('${esc(it.sku)}')">
+        <span style="min-width:34px;text-align:center;font-weight:800;font-size:18px;color:${z?'var(--bad)':lo?'var(--warn)':'var(--ink)'}">${it.on_hand==null?"—":it.on_hand}</span>
+        <span style="flex:1;text-align:left;min-width:0"><div>${esc(it.title||it.sku)}</div><div class="vsub"><span class="mono">${esc(it.sku)}</span> · ${esc(it.brand||"")}${it.bin?` · 📍 ${esc(it.bin)}`:""}</div></span></button>`;
+    }).join("");
+  }catch(e){ toast("Search failed",true); }
+}
+function pbStep(delta){ PB_QTY=Math.max(1,PB_QTY+delta); const q=$("pbqty"); if(q) q.textContent=PB_QTY; }
+function ppad(d){ const c=$("pbcount"); if(!c) return; if((c.value||"").length<6) c.value=(c.value||"")+d; }
+function ppadDel(){ const c=$("pbcount"); if(c) c.value=(c.value||"").slice(0,-1); }
+function ppadClear(){ const c=$("pbcount"); if(c) c.value=""; }
+function closePutback(){ $("putbackModal").classList.remove("show"); }
+async function openPutback(sku){
+  const m=$("putbackModal"), box=$("putbackBox"); PB_QTY=1;
+  box.innerHTML='<div class="center muted" style="padding:34px">Loading…</div>'; m.classList.add("show");
+  let d; try{ d=await api("/api/stock/item/"+encodeURIComponent(sku)); }
+  catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closePutback()">Close</button></div>'; return; }
+  const sys=d.system_qty; const low=sys!=null && sys<3;
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">🔄 Put back</h3><button class="btn sec" style="padding:6px 12px" onclick="closePutback()">✕</button></div>
+    <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
+    <div class="sub mono" style="margin-bottom:8px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div class="card" style="margin:0 0 10px;padding:6px 12px">
+      <div class="row"><span class="k">Shopify on hand</span><span class="big" style="font-size:22px;${low?'color:var(--warn)':''}">${sys==null?"—":sys}</span></div>
+    </div>
+    <div class="sectlabel" style="margin-top:0">How many going back?</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin:2px 0 4px">
+      <button class="btn sec" style="font-size:24px;width:56px;padding:8px 0" onclick="pbStep(-1)">−</button>
+      <span id="pbqty" style="font-size:30px;font-weight:800;min-width:48px;text-align:center">1</span>
+      <button class="btn sec" style="font-size:24px;width:56px;padding:8px 0" onclick="pbStep(1)">+</button>
+    </div>
+    ${low?`
+      <div class="note" style="text-align:left;margin:10px 0 6px;color:var(--warn)">⚠️ Low stock — count everything in this bin now (after putting the stray back). This sets the true number in Shopify.</div>
+      <input id="pbcount" type="text" inputmode="numeric" placeholder="Bin count" style="width:100%;box-sizing:border-box;font-size:34px;font-weight:800;text-align:center;padding:14px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px" onkeydown="if(event.key==='Enter')submitPutback('${esc(sku)}',true)">
+      <div id="pbkeypad" class="keypad hidden">
+        ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="ppad('${n}')">${n}</button>`).join("")}
+        <button type="button" class="wide" onclick="ppadClear()">Clear</button>
+        <button type="button" onclick="ppad('0')">0</button>
+        <button type="button" onclick="ppadDel()">⌫</button>
+      </div>
+      <div class="moverow" style="margin-top:12px">
+        <button class="btn sec" onclick="closePutback()">Cancel</button>
+        <button class="btn" style="flex:1" onclick="submitPutback('${esc(sku)}',true)">Put back & save count</button>
+      </div>`:`
+      <div class="moverow" style="margin-top:14px">
+        <button class="btn sec" onclick="closePutback()">Cancel</button>
+        <button class="btn" style="flex:1" onclick="submitPutback('${esc(sku)}',false)">Put back</button>
+      </div>`}
+    <div class="note">Recorded under <b>${esc(whoName()||"you")}</b>, ${fmtD(Date.now())}.</div>`;
+  if(low && IS_TOUCH){ const c=$("pbcount"); if(c) c.setAttribute("readonly","readonly"); const kp=$("pbkeypad"); if(kp) kp.classList.remove("hidden"); }
+  else if(low){ const c=$("pbcount"); if(c) setTimeout(()=>c.focus(),60); }
+}
+async function submitPutback(sku,low){
+  let counted=null;
+  if(low){ const c=$("pbcount"); counted=c?c.value.trim():""; if(counted===""){ toast("Count the bin to continue",true); return; } }
+  const btns=$("putbackBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
+  const body={key:KEY,sku,qty:PB_QTY}; if(counted!==null&&counted!=="") body.counted=Number(counted);
+  try{ const r=await api("/api/stock/putback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
+    closePutback();
+    let msg=`Put back ${r.qty} ✓`;
+    if(r.verified && r.verify){ msg = r.verify.corrected?`Put back ${r.qty} · Shopify → ${r.verify.counted}`:(r.verify.matched?`Put back ${r.qty} · count matches ${r.verify.counted}`:`Put back ${r.qty} · counted ${r.verify.counted}`); }
+    toast(msg);
+    const res=$("strayResults"); if(res) res.innerHTML=""; const inp=$("strayScan"); if(inp){ inp.value=""; if(!IS_TOUCH) inp.focus(); }
+    loadStrays();
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
 async function syncInventory(){
