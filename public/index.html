@@ -113,6 +113,19 @@
   .keypad button{padding:18px 0;font-size:21px;font-weight:800;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;-webkit-user-select:none;user-select:none}
   .keypad button:active{background:var(--accent);color:#052012}
   .keypad button.wide{font-size:15px;font-weight:700;color:var(--muted)}
+  /* on-screen keyboard for text fields — works when a scanner suppresses the iOS keyboard */
+  .oskfab{position:fixed;right:14px;bottom:74px;z-index:60;background:var(--accent);color:#052012;border:none;border-radius:50%;width:54px;height:54px;font-size:23px;box-shadow:0 4px 14px rgba(0,0,0,.45);display:none}
+  .oskfab.show{display:block}
+  .osk{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--panel);border-top:1px solid var(--line);padding:6px 5px calc(8px + env(safe-area-inset-bottom));display:none;box-shadow:0 -8px 24px rgba(0,0,0,.5)}
+  .osk.show{display:block}
+  .osk .oskhead{display:flex;align-items:center;gap:8px;padding:2px 6px 6px;font-size:12px;color:var(--muted)}
+  .osk .oskhead .val{flex:1;color:var(--ink);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;font-size:15px}
+  .osk .oskrow{display:flex;gap:4px;margin:4px 0;justify-content:center}
+  .osk .oskrow button{flex:1;max-width:46px;padding:12px 0;font-size:16px;font-weight:700;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;-webkit-user-select:none;user-select:none}
+  .osk .oskrow button:active{background:var(--accent);color:#052012}
+  .osk .oskrow button.wide{max-width:none;flex:3}
+  .osk .oskrow button.go{background:var(--accent);color:#052012;max-width:none;flex:2}
+  .osk .oskrow button.on{background:var(--accent);color:#052012}
   .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
   .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .vrow label{font-size:12px;color:var(--muted)}
@@ -144,7 +157,7 @@
 <div id="keygate" class="keyprompt hidden">
   <h2>Brusche Stockroom</h2>
   <p class="muted" id="gateMsg">Enter your username to sign in.</p>
-  <input id="keyInput" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
+  <input id="keyInput" data-osk="1" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
   <button class="btn wide" onclick="saveKey()">Sign in</button>
 </div>
 
@@ -160,7 +173,7 @@
   <!-- SCAN TAB -->
   <section id="tab-scan">
     <div class="scanbar">
-      <input id="scan" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <input id="scan" data-osk="1" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
       <button class="btn" onclick="submitScan()">Go</button>
     </div>
     <button class="btn blue wide" id="camBtn" onclick="toggleCamera()">📷 Scan with camera</button>
@@ -172,11 +185,11 @@
   <!-- BINS TAB -->
   <section id="tab-bins" class="hidden">
     <div class="scanbar">
-      <input id="newBin" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
+      <input id="newBin" data-osk="1" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
       <button class="btn" onclick="addBin()">Add</button>
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
-    <input id="binFilter" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
+    <input id="binFilter" data-osk="1" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
   </section>
@@ -184,7 +197,7 @@
   <!-- SEARCH TAB -->
   <section id="tab-search" class="hidden">
     <div class="scanbar">
-      <input id="q" placeholder="Search by name or SKU (e.g. milk chocolate)…" autocomplete="off" oninput="doFind()" />
+      <input id="q" data-osk="1" placeholder="Search by name or SKU (e.g. milk chocolate)…" autocomplete="off" oninput="doFind()" />
     </div>
     <div class="filters">
       <div class="chips">
@@ -205,7 +218,7 @@
   <!-- PICK LIST TAB -->
   <section id="tab-order" class="hidden">
     <div class="scanbar">
-      <input id="orderScan" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
+      <input id="orderScan" data-osk="1" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
       <button class="btn" onclick="submitOrder()">Go</button>
     </div>
     <button class="btn blue wide" id="ocamBtn" onclick="toggleOrderCamera()">📷 Scan packing-slip barcode</button>
@@ -219,7 +232,7 @@
     <div class="statgrid" id="vstats"></div>
     <div class="vfilters">
       <div class="vrow">
-        <input id="vq" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
+        <input id="vq" data-osk="1" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
         <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
       </div>
       <div class="vrow">
@@ -259,7 +272,7 @@
       <div class="sectlabel" style="margin-top:0">🔄 Strays — put back</div>
       <div class="note" style="text-align:left;margin:0 0 10px">Wrong picks, found items, or sellable returns going back into bins. Scan or type the item, then put it back. Items under 3 on hand must be recounted so the number stays exact.</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="strayScan" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
+        <input id="strayScan" data-osk="1" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
         <button class="btn" id="strayGoBtn" onclick="strayLookup()">Find</button>
       </div>
       <div id="strayResults"></div>
@@ -281,6 +294,8 @@
 <div class="modal" id="oosModal"><div class="box" id="oosBox"></div></div>
 <div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
 <div class="modal" id="putbackModal"><div class="box" id="putbackBox"></div></div>
+<button class="oskfab" id="oskFab" onclick="oskOpen()" title="On-screen keyboard">⌨️</button>
+<div class="osk" id="osk"></div>
 <div class="drawer" id="drawer">
   <div class="scrim" onclick="closeMenu()"></div>
   <div class="panel">
@@ -308,7 +323,10 @@ const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("
 const $ = (id)=>document.getElementById(id);
 // Touch devices (phones/tablets): don't force-hold focus on the scan box, or iOS keeps its keyboard
 // toolbar ("Done" bar) on screen. Camera is the primary input here; tap the box only when typing.
-const IS_TOUCH = (window.matchMedia && matchMedia("(pointer:coarse)").matches) || ("ontouchstart" in window);
+// Real touchscreen detection. maxTouchPoints reflects the hardware touchscreen and does NOT change when
+// a Bluetooth scanner (which iOS treats as a hardware keyboard) connects — unlike pointer:coarse, which
+// flips to "fine" the moment a scanner pairs and used to make the app hide its in-app keypads.
+const IS_TOUCH = (Number(navigator.maxTouchPoints) || 0) > 0 || (window.matchMedia && matchMedia("(pointer:coarse)").matches) || ("ontouchstart" in window);
 function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; try{localStorage.setItem("sk_key",v);}catch(e){} location.href=location.pathname+"?key="+encodeURIComponent(v); }
 function signOut(){ try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
 let CURRENT_USER="";
@@ -463,7 +481,7 @@ function renderItem(d){
       <div class="sectlabel" style="margin-top:0">Bins (${bins.length}/3)</div>
       <div class="chipwrap">${chips}</div>
       ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
-          <input id="assignBin" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
+          <input id="assignBin" data-osk="1" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
           <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label">📷</button>
           <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
         </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
@@ -492,7 +510,7 @@ function renderBin(d){
       </div>
       <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
       <div class="moverow">
-        <input id="binAdd" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
+        <input id="binAdd" data-osk="1" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
           onkeydown="if(event.key==='Enter')addToBin('${b}')">
         <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera">📷</button>
         <button class="btn" onclick="addToBin('${b}')">Add</button>
@@ -554,7 +572,7 @@ function renderUnknown(d){
     <p class="title">Unknown code</p>
     <div class="sub mono">${esc(d.code)}</div>
     <p class="muted">Not found as a SKU, barcode, or bin. If this is a SKU, you can still assign it a bin below.</p>
-    <div class="moverow"><input id="moveBin" placeholder="Bin code" autocomplete="off"><button class="btn" onclick="doMove('${esc(d.code)}')">Assign</button></div>
+    <div class="moverow"><input id="moveBin" data-osk="1" placeholder="Bin code" autocomplete="off"><button class="btn" onclick="doMove('${esc(d.code)}')">Assign</button></div>
   </div>`;
 }
 async function doMove(sku){
@@ -818,11 +836,11 @@ async function openVerify(sku){
     </div>
     <div class="note">If your count differs, Shopify inventory is corrected to match it. Recorded under <b>${esc(whoName()||"you")}</b>, ${fmtD(Date.now())}.</div>
     ${(d.history&&d.history.length)?`<div class="sectlabel">History</div><div class="hist">${d.history.map(h=>`<div class="h"><span>counted <b>${h.counted_qty}</b> vs ${h.system_qty==null?"—":h.system_qty}${h.corrected?' <span style="color:var(--accent)">· corrected</span>':""}</span><span class="muted">${esc(h.user_name||"")} · ${fmt(h.ts)}</span></div>`).join("")}</div>`:""}`;
-  // On touch (phones), a paired Bluetooth scanner makes iOS SUPPRESS the on-screen keyboard for every
-  // field — you only get the "Done" bar. So on touch we show our own number pad and make the field
-  // read-only (no futile iOS focus). On desktop, use the real keyboard and auto-focus.
-  const c=$("vcount");
-  if(IS_TOUCH){ if(c) c.setAttribute("readonly","readonly"); const kp=$("vkeypad"); if(kp) kp.classList.remove("hidden"); }
+  // A paired Bluetooth scanner makes iOS SUPPRESS the on-screen keyboard for every field — you only get
+  // the "Done" bar. So we ALWAYS show our own number pad (bulletproof, never depends on device detection).
+  // On touch, the field is read-only so iOS doesn't fight us; on desktop it stays typeable too.
+  const c=$("vcount"); const kp=$("vkeypad"); if(kp) kp.classList.remove("hidden");
+  if(IS_TOUCH){ if(c) c.setAttribute("readonly","readonly"); }
   else if(c) setTimeout(()=>c.focus(),60);
 }
 function vpad(d){ const c=$("vcount"); if(!c) return; if((c.value||"").length<6) c.value=(c.value||"")+d; }
@@ -922,8 +940,8 @@ async function openPutback(sku){
         <button class="btn" style="flex:1" onclick="submitPutback('${esc(sku)}',false)">Put back</button>
       </div>`}
     <div class="note">Recorded under <b>${esc(whoName()||"you")}</b>, ${fmtD(Date.now())}.</div>`;
-  if(low && IS_TOUCH){ const c=$("pbcount"); if(c) c.setAttribute("readonly","readonly"); const kp=$("pbkeypad"); if(kp) kp.classList.remove("hidden"); }
-  else if(low){ const c=$("pbcount"); if(c) setTimeout(()=>c.focus(),60); }
+  if(low){ const c=$("pbcount"); const kp=$("pbkeypad"); if(kp) kp.classList.remove("hidden"); // always show the pad
+    if(IS_TOUCH){ if(c) c.setAttribute("readonly","readonly"); } else if(c) setTimeout(()=>c.focus(),60); }
 }
 async function submitPutback(sku,low){
   let counted=null;
@@ -940,6 +958,33 @@ async function submitPutback(sku,low){
     loadStrays();
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
+/* ---------- On-screen keyboard for TEXT fields ----------
+   A paired Bluetooth scanner makes iOS suppress its keyboard, so tapping a text field shows only the
+   "Done" bar. This gives every text field a real in-app keyboard: focus a field → a ⌨️ button appears →
+   tap it to type. Scan fields still accept the scanner directly (they're not read-only). */
+let OSK_TARGET=null, OSK_SHIFT=false;
+function oskEligible(el){ return !!(el && el.tagName==="INPUT" && el.dataset && el.dataset.osk==="1"); }
+document.addEventListener("focusin",(e)=>{ if(oskEligible(e.target)){ OSK_TARGET=e.target; if(IS_TOUCH && !$("osk").classList.contains("show")) $("oskFab").classList.add("show"); } });
+document.addEventListener("focusout",(e)=>{ if(oskEligible(e.target)) setTimeout(()=>{ if(!$("osk").classList.contains("show") && !oskEligible(document.activeElement)) $("oskFab").classList.remove("show"); },120); });
+function oskRender(){
+  const rows=[["1","2","3","4","5","6","7","8","9","0"],["q","w","e","r","t","y","u","i","o","p"],["a","s","d","f","g","h","j","k","l"],["z","x","c","v","b","n","m"]];
+  const cap=(c)=> OSK_SHIFT && /[a-z]/.test(c) ? c.toUpperCase() : c;
+  const kb=(c)=>`<button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('${c}')">${cap(c)}</button>`;
+  const val=OSK_TARGET?(OSK_TARGET.value||""):"";
+  $("osk").innerHTML=`
+    <div class="oskhead"><span>Type:</span><span class="val">${esc(val)||"&nbsp;"}</span><button type="button" class="btn sec" style="padding:6px 14px" onpointerdown="event.preventDefault()" onclick="oskClose()">Done</button></div>
+    <div class="oskrow">${rows[0].map(kb).join("")}</div>
+    <div class="oskrow">${rows[1].map(kb).join("")}</div>
+    <div class="oskrow">${rows[2].map(kb).join("")}</div>
+    <div class="oskrow"><button type="button" class="${OSK_SHIFT?'on':''}" onpointerdown="event.preventDefault()" onclick="oskShift()">⇧</button>${rows[3].map(kb).join("")}<button type="button" onpointerdown="event.preventDefault()" onclick="oskBack()">⌫</button></div>
+    <div class="oskrow"><button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('-')">-</button><button type="button" class="wide" onpointerdown="event.preventDefault()" onclick="oskKey(' ')">space</button><button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('.')">.</button><button type="button" class="go" onpointerdown="event.preventDefault()" onclick="oskEnter()">Enter</button></div>`;
+}
+function oskOpen(){ if(!OSK_TARGET) return; oskRender(); $("osk").classList.add("show"); $("oskFab").classList.remove("show"); }
+function oskKey(c){ if(!OSK_TARGET) return; const ch=(OSK_SHIFT&&/[a-z]/.test(c))?c.toUpperCase():c; OSK_TARGET.value=(OSK_TARGET.value||"")+ch; if(OSK_SHIFT) OSK_SHIFT=false; OSK_TARGET.dispatchEvent(new Event("input",{bubbles:true})); oskRender(); }
+function oskBack(){ if(!OSK_TARGET) return; OSK_TARGET.value=(OSK_TARGET.value||"").slice(0,-1); OSK_TARGET.dispatchEvent(new Event("input",{bubbles:true})); oskRender(); }
+function oskShift(){ OSK_SHIFT=!OSK_SHIFT; oskRender(); }
+function oskClose(){ $("osk").classList.remove("show"); $("oskFab").classList.remove("show"); }
+function oskEnter(){ const t=OSK_TARGET; oskClose(); if(t) t.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true})); }
 async function syncInventory(){
   try{ const r=await api("/api/stock/sync-inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY})});
     if(r.running) toast(`Sync already running (${r.synced} so far)`); else toast("Inventory sync started — this can take a few minutes");
