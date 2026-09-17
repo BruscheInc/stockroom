@@ -157,7 +157,7 @@
 <div id="keygate" class="keyprompt hidden">
   <h2>Brusche Stockroom</h2>
   <p class="muted" id="gateMsg">Enter your username to sign in.</p>
-  <input id="keyInput" data-osk="1" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
+  <input id="keyInput" data-osk="1" inputmode="none" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
   <button class="btn wide" onclick="saveKey()">Sign in</button>
 </div>
 
@@ -173,7 +173,7 @@
   <!-- SCAN TAB -->
   <section id="tab-scan">
     <div class="scanbar">
-      <input id="scan" data-osk="1" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <input id="scan" data-osk="1" inputmode="none" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
       <button class="btn" onclick="submitScan()">Go</button>
     </div>
     <button class="btn blue wide" id="camBtn" onclick="toggleCamera()">📷 Scan with camera</button>
@@ -185,11 +185,11 @@
   <!-- BINS TAB -->
   <section id="tab-bins" class="hidden">
     <div class="scanbar">
-      <input id="newBin" data-osk="1" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
+      <input id="newBin" data-osk="1" inputmode="none" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
       <button class="btn" onclick="addBin()">Add</button>
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
-    <input id="binFilter" data-osk="1" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
+    <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
   </section>
@@ -197,7 +197,7 @@
   <!-- SEARCH TAB -->
   <section id="tab-search" class="hidden">
     <div class="scanbar">
-      <input id="q" data-osk="1" placeholder="Search by name or SKU (e.g. milk chocolate)…" autocomplete="off" oninput="doFind()" />
+      <input id="q" data-osk="1" inputmode="none" placeholder="Search by name or SKU (e.g. milk chocolate)…" autocomplete="off" oninput="doFind()" />
     </div>
     <div class="filters">
       <div class="chips">
@@ -218,7 +218,7 @@
   <!-- PICK LIST TAB -->
   <section id="tab-order" class="hidden">
     <div class="scanbar">
-      <input id="orderScan" data-osk="1" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
+      <input id="orderScan" data-osk="1" inputmode="none" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
       <button class="btn" onclick="submitOrder()">Go</button>
     </div>
     <button class="btn blue wide" id="ocamBtn" onclick="toggleOrderCamera()">📷 Scan packing-slip barcode</button>
@@ -232,7 +232,7 @@
     <div class="statgrid" id="vstats"></div>
     <div class="vfilters">
       <div class="vrow">
-        <input id="vq" data-osk="1" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
+        <input id="vq" data-osk="1" inputmode="none" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
         <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
       </div>
       <div class="vrow">
@@ -272,7 +272,7 @@
       <div class="sectlabel" style="margin-top:0">🔄 Strays — put back</div>
       <div class="note" style="text-align:left;margin:0 0 10px">Wrong picks, found items, or sellable returns going back into bins. Scan or type the item, then put it back. Items under 3 on hand must be recounted so the number stays exact.</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="strayScan" data-osk="1" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
+        <input id="strayScan" data-osk="1" inputmode="none" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
         <button class="btn" id="strayGoBtn" onclick="strayLookup()">Find</button>
       </div>
       <div id="strayResults"></div>
@@ -481,7 +481,7 @@ function renderItem(d){
       <div class="sectlabel" style="margin-top:0">Bins (${bins.length}/3)</div>
       <div class="chipwrap">${chips}</div>
       ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
-          <input id="assignBin" data-osk="1" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
+          <input id="assignBin" data-osk="1" inputmode="none" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
           <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label">📷</button>
           <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
         </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
@@ -510,7 +510,7 @@ function renderBin(d){
       </div>
       <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
       <div class="moverow">
-        <input id="binAdd" data-osk="1" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
+        <input id="binAdd" data-osk="1" inputmode="none" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
           onkeydown="if(event.key==='Enter')addToBin('${b}')">
         <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera">📷</button>
         <button class="btn" onclick="addToBin('${b}')">Add</button>
@@ -572,7 +572,7 @@ function renderUnknown(d){
     <p class="title">Unknown code</p>
     <div class="sub mono">${esc(d.code)}</div>
     <p class="muted">Not found as a SKU, barcode, or bin. If this is a SKU, you can still assign it a bin below.</p>
-    <div class="moverow"><input id="moveBin" data-osk="1" placeholder="Bin code" autocomplete="off"><button class="btn" onclick="doMove('${esc(d.code)}')">Assign</button></div>
+    <div class="moverow"><input id="moveBin" data-osk="1" inputmode="none" placeholder="Bin code" autocomplete="off"><button class="btn" onclick="doMove('${esc(d.code)}')">Assign</button></div>
   </div>`;
 }
 async function doMove(sku){
