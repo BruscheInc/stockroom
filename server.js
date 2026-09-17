@@ -119,6 +119,21 @@ async function migrate() {
     ts TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_verlog_sku ON stock_verification_log(sku, ts DESC)`);
+  // Strays: wrong-picks / found items / sellable returns put back into bins. Logged for the audit trail;
+  // for low-stock items (< 3 on hand) a physical recount is required and that recount corrects Shopify.
+  await db(`CREATE TABLE IF NOT EXISTS stock_strays (
+    id BIGSERIAL PRIMARY KEY,
+    sku TEXT NOT NULL,
+    title TEXT,
+    qty INTEGER,
+    bin TEXT,
+    system_qty INTEGER,
+    verified BOOLEAN DEFAULT false,
+    counted_qty INTEGER,
+    user_name TEXT,
+    ts TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_strays_ts ON stock_strays(ts DESC)`);
   await db(`CREATE TABLE IF NOT EXISTS oos_cases (
     id BIGSERIAL PRIMARY KEY,
     order_number TEXT NOT NULL,
@@ -863,6 +878,27 @@ app.get("/api/stock/item/:sku", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Record a physical count (who/when) and correct Shopify on-hand to it when it differs.
+// Shared by /api/stock/verify and the low-stock path of /api/stock/putback. Returns the result object.
+async function doVerify(sku, cnt, by, note) {
+  const items = (await db(`SELECT brand,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+  const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
+  const matched = system != null && cnt === system;
+  let correction = null, correctionNote = null;
+  if (system == null || cnt !== system) {
+    correction = await shopifySetOnHand(sku, cnt);
+    const okc = correction.filter((c) => c.ok), bad = correction.filter((c) => !c.ok);
+    correctionNote = correction.length ? [okc.length ? `set ${okc.map((c) => c.brand).join(", ")} → ${cnt}` : "", bad.length ? `failed: ${bad.map((c) => `${c.brand} (${c.error})`).join("; ")}` : ""].filter(Boolean).join(" · ") : "no Shopify inventory item on file";
+  }
+  // "corrected" = the count differed AND we successfully wrote Shopify to match (so it's now consistent).
+  const corrected = !!(correction && correction.some((c) => c.ok));
+  await db(`INSERT INTO stock_verifications (sku,counted_qty,system_qty,matched,corrected,verified_by,verified_at,note)
+    VALUES ($1,$2,$3,$4,$5,$6,now(),$7)
+    ON CONFLICT (sku) DO UPDATE SET counted_qty=$2, system_qty=$3, matched=$4, corrected=$5, verified_by=$6, verified_at=now(), note=$7`,
+    [sku, cnt, system, matched, corrected, by, note || null]);
+  await db(`INSERT INTO stock_verification_log (sku,counted_qty,system_qty,corrected,correction_note,user_name,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [sku, cnt, system, corrected, correctionNote, by, note || null]);
+  return { ok: true, sku, counted: cnt, system_qty: system, matched, corrected, verified_by: by, correction, correction_note: correctionNote };
+}
 app.post("/api/stock/verify", async (req, res) => {
   if (!guard(req, res)) return;
   try {
@@ -870,25 +906,47 @@ app.post("/api/stock/verify", async (req, res) => {
     if (!sku || counted === undefined || counted === null || counted === "") return res.status(400).json({ error: "sku and counted required" });
     const cnt = Number(counted);
     if (!Number.isFinite(cnt) || cnt < 0) return res.status(400).json({ error: "counted must be a non-negative number" });
+    res.json(await doVerify(sku, cnt, actorOf(req), note));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Strays — put a wrong-pick / found item / sellable return back into a bin. Logs the put-back.
+// If the item is under 3 on hand, a physical recount is REQUIRED and that recount corrects Shopify.
+const STRAY_VERIFY_THRESHOLD = 3; // "under 3" → recount required
+app.post("/api/stock/putback", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { sku, qty, counted, note } = req.body || {};
+    if (!sku) return res.status(400).json({ error: "sku required" });
+    const putQty = qty === undefined || qty === null || qty === "" ? 1 : Number(qty);
+    if (!Number.isFinite(putQty) || putQty < 1) return res.status(400).json({ error: "quantity must be at least 1" });
     const by = actorOf(req);
-    const items = (await db(`SELECT brand,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
-    const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
-    const matched = system != null && cnt === system;
-    let correction = null, correctionNote = null;
-    if (system == null || cnt !== system) {
-      correction = await shopifySetOnHand(sku, cnt);
-      const okc = correction.filter((c) => c.ok), bad = correction.filter((c) => !c.ok);
-      correctionNote = correction.length ? [okc.length ? `set ${okc.map((c) => c.brand).join(", ")} → ${cnt}` : "", bad.length ? `failed: ${bad.map((c) => `${c.brand} (${c.error})`).join("; ")}` : ""].filter(Boolean).join(" · ") : "no Shopify inventory item on file";
+    const items = (await db(`SELECT brand,title,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+    if (!items.length) return res.status(404).json({ error: "item not found in stock" });
+    const system = items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), null);
+    const title = items.find((r) => r.title)?.title || null;
+    const bin = (await db(`SELECT bin FROM item_location WHERE sku=$1`, [sku])).rows[0]?.bin || null;
+    const needsVerify = system != null && system < STRAY_VERIFY_THRESHOLD;
+    const hasCount = counted !== undefined && counted !== null && counted !== "";
+    // Low-stock items must be recounted before the put-back can be saved.
+    if (needsVerify && !hasCount) return res.status(400).json({ error: "recount required", needs_verify: true, sku, title, bin, system_qty: system });
+    let verify = null;
+    if (hasCount) {
+      const cnt = Number(counted);
+      if (!Number.isFinite(cnt) || cnt < 0) return res.status(400).json({ error: "count must be a non-negative number" });
+      verify = await doVerify(sku, cnt, by, note ? `put-back · ${note}` : "put-back recount");
     }
-    // "corrected" = the count differed AND we successfully wrote Shopify to match (so it's now consistent).
-    const corrected = !!(correction && correction.some((c) => c.ok));
-    await db(`INSERT INTO stock_verifications (sku,counted_qty,system_qty,matched,corrected,verified_by,verified_at,note)
-      VALUES ($1,$2,$3,$4,$5,$6,now(),$7)
-      ON CONFLICT (sku) DO UPDATE SET counted_qty=$2, system_qty=$3, matched=$4, corrected=$5, verified_by=$6, verified_at=now(), note=$7`,
-      [sku, cnt, system, matched, corrected, by, note || null]);
-    await db(`INSERT INTO stock_verification_log (sku,counted_qty,system_qty,corrected,correction_note,user_name,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [sku, cnt, system, corrected, correctionNote, by, note || null]);
-    res.json({ ok: true, sku, counted: cnt, system_qty: system, matched, corrected, verified_by: by, correction, correction_note: correctionNote });
+    const verified = !!verify;
+    await db(`INSERT INTO stock_strays (sku,title,qty,bin,system_qty,verified,counted_qty,user_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [sku, title, putQty, bin, system, verified, verify ? verify.counted : null, by]);
+    res.json({ ok: true, sku, title, bin, qty: putQty, system_qty: system, needs_verify: needsVerify, verified, verify, user_name: by });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Strays — recent put-backs (audit list for the Strays screen).
+app.get("/api/stock/strays", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`SELECT sku,title,qty,bin,system_qty,verified,counted_qty,user_name,ts FROM stock_strays ORDER BY ts DESC LIMIT 60`);
+    res.json({ strays: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Trigger / poll the Shopify inventory snapshot sync.
