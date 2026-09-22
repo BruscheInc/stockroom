@@ -1011,20 +1011,23 @@ async function openOos(order, sku){
       <div class="row"><span class="k">Item value</span><span class="v">${money(d.item_value)}</span></div>
       <div class="row"><span class="k">Store credit (+15%)</span><span class="v" style="color:var(--accent)">${money(d.credit_value)}</span></div>
     </div>
+    <div class="sectlabel" style="margin-top:0">Subject</div>
+    <input id="oosSubject" type="text" value="${esc(d.subject)}" spellcheck="true" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:10px 12px;font-size:14px">
     <div class="sectlabel" style="margin-top:0">Email to the customer — edit if you like</div>
     <textarea id="oosText" spellcheck="true">${esc(d.text)}</textarea>
     <div class="moverow" style="margin-top:12px">
       <button class="btn sec" onclick="closeOos()">Cancel</button>
       <button class="btn" style="flex:1" onclick="sendOos('${esc(order)}','${esc(d.item.sku)}')">Send to Jose for approval →</button>
     </div>
-    <div class="note">Posts to your Slack for Approve / Deny / Edit — nothing goes to the customer until you approve.</div>`;
+    <div class="note">Posts to #cs-approvals — nothing goes to the customer until someone taps Apply there.</div>`;
 }
 function closeOos(){ $("oosModal").classList.remove("show"); }
 async function sendOos(order, sku){
   const text=$("oosText")?$("oosText").value:"";
+  const subject=$("oosSubject")?$("oosSubject").value:"";
   const btns=$("oosBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
   try{
-    const r=await api("/api/oos/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,order,sku,text})});
+    const r=await api("/api/oos/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,order,sku,subject,text})});
     if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
     closeOos(); toast(`Sent to Jose for approval · case #${r.case_id}`);
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
