@@ -498,6 +498,8 @@ function renderItem(d){
   const bins = tokens(d.current_bin);
   const chips = bins.length ? bins.map(bn=>`<span class="binchip">📍 ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin">✕</button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
   const binPill = bins.length ? `<span class="pill bin">📍 ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
+  // Overstock carton — shown the moment an item is scanned. Blank when nothing has been uploaded for it.
+  const osPill = d.overstock ? `<span class="pill bin" style="cursor:pointer" onclick="showOverstockBox('${esc(d.overstock.box)}')">📦 Box ${esc(d.overstock.box)}</span>` : "";
   $("result").innerHTML=`
     <div class="card">
       <div class="itemhead">
@@ -505,7 +507,7 @@ function renderItem(d){
         <div style="flex:1;min-width:0">
           <p class="title">${esc(d.title||d.sku)}</p>
           <div class="sub mono">SKU ${esc(d.sku||"—")}${d.barcode?` · UPC ${esc(d.barcode)}`:""}</div>
-          <div style="margin-top:6px">${binPill}</div>
+          <div style="margin-top:6px">${binPill}${osPill}</div>
         </div>
       </div>
       <div class="qtygrid"><div class="k" style="align-self:end">On hand (all stores)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
@@ -526,10 +528,11 @@ function renderItem(d){
           <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(d.overstock.box)}')">✏️ Change</button>
         </div>
         <div class="note">Tap the box to see everything else inside it. Change it if the carton was moved or re-labelled.</div>`
-        : `<div class="moverow">
-          <input id="osBoxIn" data-osk="1" inputmode="none" placeholder="Box number (e.g. 235-B)" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveOverstock('${esc(d.sku)}')">
-          <button class="btn" onclick="saveOverstock('${esc(d.sku)}')">Set</button>
-        </div><div class="note">Not in any uploaded packing list. Set a box number to track it here.</div>`}
+        : `<div class="chipwrap">
+          <span class="muted">No overstock box.</span>
+          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','')">Set box</button>
+        </div>
+        <div class="note">Nothing uploaded for this SKU. Upload its packing list under Overstock, or set a box by hand.</div>`}
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Location history</div>
