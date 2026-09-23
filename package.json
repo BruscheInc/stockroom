@@ -2,11 +2,14 @@
   "name": "stockroom",
   "version": "1.0.0",
   "private": true,
-  "description": "Brusche Stockroom — bin-location & stock manager over Shopify + ShipStation, with barcode/QR scanning.",
+  "description": "Brusche Stockroom \u2014 bin-location & stock manager over Shopify + ShipStation, with barcode/QR scanning.",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "express": "^4.19.2",
-    "pg": "^8.12.0"
+    "pg": "^8.12.0",
+    "xlsx": "^0.18.5"
   }
 }

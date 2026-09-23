@@ -156,6 +156,30 @@ async function migrate() {
     updated_at TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS ticket_id TEXT`);
+  // Overstock: which sealed carton a SKU's backstock is in. Loaded from the factory packing-list
+  // workbook (the "BIN" sheet: Title / Option1 Value / Variant SKU / BIN#). One row per SKU.
+  await db(`CREATE TABLE IF NOT EXISTS overstock_bins (
+    sku TEXT PRIMARY KEY,
+    title TEXT,
+    variant TEXT,
+    box TEXT,
+    batch TEXT,
+    source_file TEXT,
+    uploaded_by TEXT,
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_overstock_box ON overstock_bins(box)`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_overstock_batch ON overstock_bins(batch)`);
+  await db(`CREATE TABLE IF NOT EXISTS overstock_log (
+    id BIGSERIAL PRIMARY KEY,
+    sku TEXT,
+    from_box TEXT,
+    to_box TEXT,
+    scope TEXT,
+    user_name TEXT,
+    ts TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_overstocklog_sku ON overstock_log(sku, ts DESC)`);
 }
 
 /* --------------------------------------- Shopify (multi-store) --------------------------------------- */
@@ -618,6 +642,7 @@ async function resolveCode(raw) {
       stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
       total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
+      overstock: await overstockFor(sku),
       history: await getHistory(sku, 15),
     };
   }
@@ -636,6 +661,7 @@ async function resolveCode(raw) {
 /* --------------------------------------- HTTP --------------------------------------- */
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+app.use(express.raw({ type: ["application/octet-stream", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv"], limit: "20mb" }));
 function keyFrom(req) { return req.query.key || req.get("x-stockroom-key") || (req.body && req.body.key) || ""; }
 const authed = (req) => userFromKey(keyFrom(req)) !== null;
 const actorOf = (req) => userFromKey(keyFrom(req)) || "unknown";
@@ -660,6 +686,146 @@ app.get("/api/order", async (req, res) => {
   try { res.json(await buildPickList(req.query.code)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+/* --------------------------------------- Overstock cartons --------------------------------------- */
+// Read the "BIN" sheet of a factory packing-list workbook (or a CSV with the same columns).
+// Headers are matched loosely so a re-ordered or re-named export still imports.
+function parseOverstockSheet(buf, filename) {
+  const XLSX = require("xlsx");
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const sheetName = wb.SheetNames.find((n) => /^bin/i.test(n)) || wb.SheetNames.find((n) => /bin/i.test(n)) || wb.SheetNames[wb.SheetNames.length - 1];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+  if (!rows.length) throw new Error(`sheet "${sheetName}" is empty`);
+  const headers = Object.keys(rows[0]);
+  const find = (re) => headers.find((h) => re.test(String(h).trim()));
+  const hSku = find(/variant\s*sku|^sku$/i) || find(/sku/i);
+  const hBox = find(/^bin\s*#?$/i) || find(/bin|box|carton/i);
+  const hTitle = find(/^title$|product|style/i);
+  const hVar = find(/option1|variant|size/i);
+  if (!hSku || !hBox) throw new Error(`couldn't find a SKU column and a BIN column in sheet "${sheetName}" (saw: ${headers.join(", ")})`);
+  const out = [], seen = new Set();
+  let skipped = 0;
+  for (const r of rows) {
+    const sku = String(r[hSku] == null ? "" : r[hSku]).trim();
+    const box = String(r[hBox] == null ? "" : r[hBox]).trim();
+    if (!sku || !box) { skipped++; continue; }
+    if (seen.has(sku.toLowerCase())) { skipped++; continue; }   // a duplicated SKU row would otherwise win silently
+    seen.add(sku.toLowerCase());
+    out.push({
+      sku, box,
+      title: hTitle ? String(r[hTitle] == null ? "" : r[hTitle]).trim() : null,
+      variant: hVar ? String(r[hVar] == null ? "" : r[hVar]).trim() : null,
+    });
+  }
+  const batch = (String(filename || "").match(/[A-Za-z]{2}\d{2,}/) || [])[0] || null;
+  return { rows: out, skipped, sheet: sheetName, batch };
+}
+// Upload a packing-list workbook. The body is the raw file; ?name= carries the filename.
+app.post("/api/overstock/import", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const buf = req.body;
+    if (!buf || !buf.length || !Buffer.isBuffer(buf)) return res.status(400).json({ error: "no file received" });
+    const filename = String(req.query.name || "upload.xlsx");
+    const { rows, skipped, sheet, batch } = parseOverstockSheet(buf, filename);
+    if (!rows.length) return res.status(400).json({ error: `no usable rows in sheet "${sheet}"` });
+    const by = actorOf(req);
+    let imported = 0, updated = 0;
+    for (const r of rows) {
+      const q = await db(
+        `INSERT INTO overstock_bins (sku,title,variant,box,batch,source_file,uploaded_by,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+         ON CONFLICT (sku) DO UPDATE SET title=EXCLUDED.title, variant=EXCLUDED.variant, box=EXCLUDED.box,
+           batch=EXCLUDED.batch, source_file=EXCLUDED.source_file, uploaded_by=EXCLUDED.uploaded_by, updated_at=now()
+         RETURNING (xmax = 0) AS inserted`,
+        [r.sku, r.title, r.variant, r.box, batch, filename, by]
+      );
+      if (q.rows[0] && q.rows[0].inserted) imported++; else updated++;
+    }
+    res.json({ ok: true, sheet, batch, file: filename, rows: rows.length, imported, updated, skipped, boxes: [...new Set(rows.map((r) => r.box))].length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Look up overstock by SKU, by box, or by batch — one endpoint, whatever was scanned or typed.
+app.get("/api/overstock", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const q = String(req.query.q || "").trim();
+    if (!q) {
+      const r = await db(`SELECT batch, count(*)::int AS skus, count(DISTINCT box)::int AS boxes, max(updated_at) AS updated_at, max(source_file) AS source_file
+                          FROM overstock_bins GROUP BY batch ORDER BY max(updated_at) DESC`);
+      return res.json({ batches: r.rows });
+    }
+    const r = await db(
+      `SELECT sku,title,variant,box,batch,updated_at FROM overstock_bins
+       WHERE lower(sku)=lower($1) OR lower(box)=lower($1) OR lower(batch)=lower($1)
+          OR sku ILIKE '%'||$1||'%' OR title ILIKE '%'||$1||'%'
+       ORDER BY box, sku LIMIT 300`, [q]);
+    res.json({ items: r.rows, count: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Everything in one carton.
+app.get("/api/overstock/box/:box", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`SELECT sku,title,variant,box,batch FROM overstock_bins WHERE lower(box)=lower($1) ORDER BY sku`, [req.params.box]);
+    res.json({ box: req.params.box, items: r.rows, count: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Change one SKU's carton by hand (the sheet is the source of truth until someone moves a box).
+// An empty box clears the SKU from overstock entirely. Every change is logged.
+app.post("/api/overstock/set", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const sku = String((req.body && req.body.sku) || "").trim();
+    const box = String((req.body && req.body.box) || "").trim();
+    if (!sku) return res.status(400).json({ error: "sku required" });
+    const by = actorOf(req);
+    const prev = await db(`SELECT box FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]);
+    const fromBox = prev.rows[0] ? prev.rows[0].box : null;
+    if (!box) {
+      await db(`DELETE FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]);
+      await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES ($1,$2,NULL,'sku',$3)`, [sku, fromBox, by]);
+      return res.json({ ok: true, sku, box: null, cleared: true, from_box: fromBox });
+    }
+    const title = (req.body && req.body.title) || null, variant = (req.body && req.body.variant) || null;
+    await db(
+      `INSERT INTO overstock_bins (sku,title,variant,box,batch,source_file,uploaded_by,updated_at)
+       VALUES ($1,$2,$3,$4,NULL,'manual',$5,now())
+       ON CONFLICT (sku) DO UPDATE SET box=EXCLUDED.box, uploaded_by=EXCLUDED.uploaded_by, updated_at=now(),
+         title=COALESCE(overstock_bins.title, EXCLUDED.title), variant=COALESCE(overstock_bins.variant, EXCLUDED.variant)`,
+      [sku, title, variant, box, by]
+    );
+    await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES ($1,$2,$3,'sku',$4)`, [sku, fromBox, box, by]);
+    res.json({ ok: true, sku, box, from_box: fromBox });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Re-label a whole carton — everything in `from` moves to `to`. This is the common case when a box is moved.
+app.post("/api/overstock/move-box", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const from = String((req.body && req.body.from) || "").trim();
+    const to = String((req.body && req.body.to) || "").trim();
+    if (!from || !to) return res.status(400).json({ error: "from and to required" });
+    if (from.toLowerCase() === to.toLowerCase()) return res.status(400).json({ error: "that's the same box" });
+    const by = actorOf(req);
+    const r = await db(`UPDATE overstock_bins SET box=$2, updated_at=now(), uploaded_by=$3 WHERE lower(box)=lower($1) RETURNING sku`, [from, to, by]);
+    if (!r.rows.length) return res.status(404).json({ error: `no overstock in box ${from}` });
+    await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES (NULL,$1,$2,'box',$3)`, [from, to, by]);
+    res.json({ ok: true, from, to, moved: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Recent manual changes, newest first.
+app.get("/api/overstock/log", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`SELECT sku,from_box,to_box,scope,user_name,ts FROM overstock_log ORDER BY ts DESC LIMIT 50`);
+    res.json({ log: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+async function overstockFor(sku) {
+  try { const r = await db(`SELECT box,batch,updated_at FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]); return r.rows[0] || null; }
+  catch (e) { return null; }
+}
+
 // Out of stock — preview the drafted customer email for one item on an order.
 app.get("/api/oos/preview", async (req, res) => {
   if (!guard(req, res)) return;
@@ -711,6 +877,7 @@ app.get("/api/item/:sku", async (req, res) => {
       stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
       total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
+      overstock: await overstockFor(sku),
       history: await getHistory(sku, 50),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -798,7 +965,9 @@ app.get("/api/find", async (req, res) => {
     const skus = [...new Set(rows.map((r) => r.sku).filter(Boolean))];
     const binBySku = {};
     if (skus.length) { const b = await db(`SELECT sku,bin FROM item_location WHERE sku = ANY($1)`, [skus]); for (const r of b.rows) binBySku[r.sku] = r.bin; }
-    rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null }));
+    const osBySku = {};
+    if (skus.length) { const o = await db(`SELECT sku,box FROM overstock_bins WHERE sku = ANY($1)`, [skus]); for (const r of o.rows) osBySku[r.sku] = r.box; }
+    rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null, overstock_box: r.sku ? (osBySku[r.sku] || null) : null }));
     rows.sort((a, b) => (a.title || "").localeCompare(b.title || "") || (a.brand || "").localeCompare(b.brand || ""));
     res.json({ items: rows, count: rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
