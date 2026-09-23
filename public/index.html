@@ -113,19 +113,31 @@
   .keypad button{padding:18px 0;font-size:21px;font-weight:800;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;-webkit-user-select:none;user-select:none}
   .keypad button:active{background:var(--accent);color:#052012}
   .keypad button.wide{font-size:15px;font-weight:700;color:var(--muted)}
-  /* on-screen keyboard for text fields — works when a scanner suppresses the iOS keyboard */
+  /* on-screen keyboard — iOS dark-appearance replica (a scanner makes iOS suppress its own keyboard) */
   .oskfab{position:fixed;right:14px;bottom:74px;z-index:60;background:var(--accent);color:#052012;border:none;border-radius:50%;width:54px;height:54px;font-size:23px;box-shadow:0 4px 14px rgba(0,0,0,.45);display:none}
   .oskfab.show{display:block}
-  .osk{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--panel);border-top:1px solid var(--line);padding:6px 5px calc(8px + env(safe-area-inset-bottom));display:none;box-shadow:0 -8px 24px rgba(0,0,0,.5)}
+  .osk{position:fixed;left:0;right:0;bottom:0;z-index:95;background:#1b1b1d;display:none;
+       padding:8px 3px calc(4px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(0,0,0,.5);
+       font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
+       -webkit-user-select:none;user-select:none;touch-action:manipulation}
   .osk.show{display:block}
-  .osk .oskhead{display:flex;align-items:center;gap:8px;padding:2px 6px 6px;font-size:12px;color:var(--muted)}
-  .osk .oskhead .val{flex:1;color:var(--ink);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;font-size:15px}
-  .osk .oskrow{display:flex;gap:4px;margin:4px 0;justify-content:center}
-  .osk .oskrow button{flex:1;max-width:46px;padding:12px 0;font-size:16px;font-weight:700;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;-webkit-user-select:none;user-select:none}
-  .osk .oskrow button:active{background:var(--accent);color:#052012}
-  .osk .oskrow button.wide{max-width:none;flex:3}
-  .osk .oskrow button.go{background:var(--accent);color:#052012;max-width:none;flex:2}
-  .osk .oskrow button.on{background:var(--accent);color:#052012}
+  .osk .oskbar{display:flex;align-items:center;gap:10px;padding:2px 9px 8px;font-size:12px;color:#8e8e93}
+  .osk .oskbar .val{flex:1;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;direction:ltr;text-align:left;unicode-bidi:plaintext}
+  .osk .oskbar .done{background:none;border:none;color:#0a84ff;font-size:16px;font-weight:600;padding:2px 4px}
+  .osk .oskrow{display:flex;gap:6px;margin:0 0 11px;align-items:stretch}
+  .osk .oskrow:last-child{margin-bottom:2px}
+  .osk .k{flex:1 1 0;min-width:0;height:44px;border:none;border-radius:5px;background:#6b6b6e;color:#fff;
+          font-size:24px;font-weight:400;line-height:1;box-shadow:0 1px 0 rgba(0,0,0,.45);padding:0;
+          font-family:inherit;display:flex;align-items:center;justify-content:center}
+  .osk .k.fn{background:#464649;font-size:16px;font-weight:500;flex:1.5 1 0}
+  .osk .k.space{flex:5 1 0;font-size:15px}
+  .osk .k.go{background:#0a84ff;flex:2 1 0;font-size:16px;font-weight:600}
+  .osk .k.on{background:#e9e9eb;color:#1b1b1d}
+  .osk .k:active{background:#464649}
+  .osk .k.fn:active,.osk .k.space:active{background:#6b6b6e}
+  .osk .sp{flex:.5 1 0}
+  .pop{position:fixed;z-index:96;background:#6b6b6e;color:#fff;border-radius:8px;padding:6px 0;
+            min-width:44px;text-align:center;font-size:30px;pointer-events:none;box-shadow:0 3px 10px rgba(0,0,0,.5);display:none}
   .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
   .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .vrow label{font-size:12px;color:var(--muted)}
@@ -267,6 +279,24 @@
     <div id="vlist" class="card"><div class="muted center">Loading…</div></div>
   </section>
 
+  <section id="tab-overstock" class="hidden">
+    <div class="card">
+      <div class="sectlabel" style="margin-top:0">Find overstock</div>
+      <div class="moverow">
+        <input id="osq" data-osk="1" inputmode="none" placeholder="SKU, box (235-B) or batch (LB81)…" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')osSearch()" style="flex:1;min-width:150px">
+        <button class="btn" onclick="osSearch()">Search</button>
+      </div>
+      <div class="note">Scanning a SKU anywhere in the app also shows its carton.</div>
+    </div>
+    <div id="osres"></div>
+    <div class="card">
+      <div class="sectlabel" style="margin-top:0">Upload a packing list</div>
+      <div class="note" style="margin-top:0">Pick the factory workbook (.xlsx) or a CSV. The app reads the <b>BIN</b> sheet — Title · Option1 Value · Variant SKU · BIN#. Re-uploading the same batch updates it.</div>
+      <input type="file" id="osfile" accept=".xlsx,.xls,.csv" style="width:100%;margin-top:10px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:10px;font-size:14px">
+      <button class="btn wide" id="osUp" style="margin-top:10px" onclick="osUpload()">Upload</button>
+      <div id="osbatches" style="margin-top:12px"></div>
+    </div>
+  </section>
   <section id="tab-strays" class="hidden">
     <div class="card" style="margin-bottom:10px">
       <div class="sectlabel" style="margin-top:0">🔄 Strays — put back</div>
@@ -292,10 +322,12 @@
 
 <div class="toast" id="toast"></div>
 <div class="modal" id="oosModal"><div class="box" id="oosBox"></div></div>
+<div class="modal" id="osEditModal"><div class="box" id="osEditBox"></div></div>
 <div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
 <div class="modal" id="putbackModal"><div class="box" id="putbackBox"></div></div>
 <button class="oskfab" id="oskFab" onclick="oskOpen()" title="On-screen keyboard">⌨️</button>
 <div class="osk" id="osk"></div>
+<div class="pop" id="oskPop"></div>
 <div class="drawer" id="drawer">
   <div class="scrim" onclick="closeMenu()"></div>
   <div class="panel">
@@ -306,6 +338,7 @@
     <button class="menuitem" data-tab="order" onclick="menuGo('order')"><span class="i">🧾</span> Pick List</button>
     <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><span class="i">📊</span> Stock Verification</button>
     <button class="menuitem" data-tab="strays" onclick="menuGo('strays')"><span class="i">🔄</span> Strays</button>
+    <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><span class="i">📦</span> Overstock</button>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
     <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
     <div class="menusec">Actions</div>
@@ -361,13 +394,14 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","verify","strays","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","overstock","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
   if(t==="scan") setTimeout(keepFocus,50);
   if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
   if(t==="verify"){ loadStockSummary(); loadStockList(); }
+  if(t==="overstock"){ osBatches(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -486,6 +520,16 @@ function renderItem(d){
           <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
         </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
         : `<div class="note">Max 3 bins — remove one (✕) to add another.</div>`}
+      <div class="sectlabel">Overstock carton</div>
+      ${d.overstock ? `<div class="chipwrap">
+          <span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(d.overstock.box)}')">📦 Box ${esc(d.overstock.box)}${d.overstock.batch?` · ${esc(d.overstock.batch)}`:""}</span>
+          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(d.overstock.box)}')">✏️ Change</button>
+        </div>
+        <div class="note">Tap the box to see everything else inside it. Change it if the carton was moved or re-labelled.</div>`
+        : `<div class="moverow">
+          <input id="osBoxIn" data-osk="1" inputmode="none" placeholder="Box number (e.g. 235-B)" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveOverstock('${esc(d.sku)}')">
+          <button class="btn" onclick="saveOverstock('${esc(d.sku)}')">Set</button>
+        </div><div class="note">Not in any uploaded packing list. Set a box number to track it here.</div>`}
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Location history</div>
@@ -657,11 +701,12 @@ function renderFind(){
   if(!rows.length){ $("searchres").innerHTML='<div class="muted center">No results match the current filters.</div>'; return; }
   const total=findItems.length;
   $("searchres").innerHTML='<div class="muted" style="margin-bottom:8px">'+rows.length+' of '+total+' shown</div>'+
-    '<table><thead><tr><th>Item</th><th class="n">Qty</th><th>Bin</th></tr></thead><tbody>'+
+    '<table><thead><tr><th>Item</th><th class="n">Qty</th><th>Bin</th><th>Box</th></tr></thead><tbody>'+
     rows.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
       <td><div>${esc(it.title||"")}</div><div class="muted" style="font-size:12px">${esc(it.brand)} · <span class="mono">${esc(it.sku||"—")}</span>${it.status&&String(it.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(it.status).toLowerCase()==="archived"?"inactive":String(it.status).toLowerCase())}`:""}</div></td>
       <td class="n"><b>${it.qty==null?"—":it.qty}</b></td>
-      <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
+      <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td>
+      <td style="white-space:nowrap">${it.overstock_box?`<span class="mono">${esc(it.overstock_box)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
     '</tbody></table>';
 }
 
@@ -958,33 +1003,209 @@ async function submitPutback(sku,low){
     loadStrays();
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
-/* ---------- On-screen keyboard for TEXT fields ----------
-   A paired Bluetooth scanner makes iOS suppress its keyboard, so tapping a text field shows only the
-   "Done" bar. This gives every text field a real in-app keyboard: focus a field → a ⌨️ button appears →
-   tap it to type. Scan fields still accept the scanner directly (they're not read-only). */
-let OSK_TARGET=null, OSK_SHIFT=false;
+/* ---------- On-screen keyboard for TEXT fields — iOS replica ----------
+   A paired Bluetooth scanner makes iOS suppress its own keyboard, so tapping a text field shows only the
+   "Done" bar. This is a full stand-in: QWERTY with shift / caps-lock, a 123 number layer and a #+= symbol
+   layer, key pop-ups, hold-to-repeat backspace, and insertion at the cursor. Focus a field → ⌨️ → type. */
+let OSK_TARGET=null, OSK_SHIFT=false, OSK_LOCK=false, OSK_LAYER="abc", OSK_SHIFT_TS=0, OSK_REPEAT=null;
+const OSK_LAYOUTS={
+  abc:[["q","w","e","r","t","y","u","i","o","p"],["a","s","d","f","g","h","j","k","l"],["z","x","c","v","b","n","m"]],
+  "123":[["1","2","3","4","5","6","7","8","9","0"],["-","/",":",";","(",")","$","&","@","\""],[".",",","?","!","'"]],
+  "#+=":[["[","]","{","}","#","%","^","*","+","="],["_","\\","|","~","<",">","\u20ac","\u00a3","\u00a5","\u2022"],[".",",","?","!","'"]],
+};
 function oskEligible(el){ return !!(el && el.tagName==="INPUT" && el.dataset && el.dataset.osk==="1"); }
 document.addEventListener("focusin",(e)=>{ if(oskEligible(e.target)){ OSK_TARGET=e.target; if(IS_TOUCH && !$("osk").classList.contains("show")) $("oskFab").classList.add("show"); } });
 document.addEventListener("focusout",(e)=>{ if(oskEligible(e.target)) setTimeout(()=>{ if(!$("osk").classList.contains("show") && !oskEligible(document.activeElement)) $("oskFab").classList.remove("show"); },120); });
+function oskCap(c){ return (OSK_SHIFT||OSK_LOCK) && /[a-z]/.test(c) ? c.toUpperCase() : c; }
 function oskRender(){
-  const rows=[["1","2","3","4","5","6","7","8","9","0"],["q","w","e","r","t","y","u","i","o","p"],["a","s","d","f","g","h","j","k","l"],["z","x","c","v","b","n","m"]];
-  const cap=(c)=> OSK_SHIFT && /[a-z]/.test(c) ? c.toUpperCase() : c;
-  const kb=(c)=>`<button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('${c}')">${cap(c)}</button>`;
+  const rows=OSK_LAYOUTS[OSK_LAYER];
+  const key=(c)=>`<button type="button" class="k" data-ch="${esc(c)}">${esc(oskCap(c))}</button>`;
+  const shiftLabel = OSK_LOCK ? "\u21ea" : "\u21e7";
+  const r3 = OSK_LAYER==="abc"
+    ? `<button type="button" class="k fn${OSK_SHIFT||OSK_LOCK?" on":""}" data-act="shift">${shiftLabel}</button>${rows[2].map(key).join("")}<button type="button" class="k fn" data-act="back">\u232b</button>`
+    : `<button type="button" class="k fn" data-act="layer" data-layer="${OSK_LAYER==="123"?"#+=":"123"}">${OSK_LAYER==="123"?"#+=":"123"}</button><span class="sp"></span>${rows[2].map(key).join("")}<span class="sp"></span><button type="button" class="k fn" data-act="back">\u232b</button>`;
   const val=OSK_TARGET?(OSK_TARGET.value||""):"";
   $("osk").innerHTML=`
-    <div class="oskhead"><span>Type:</span><span class="val">${esc(val)||"&nbsp;"}</span><button type="button" class="btn sec" style="padding:6px 14px" onpointerdown="event.preventDefault()" onclick="oskClose()">Done</button></div>
-    <div class="oskrow">${rows[0].map(kb).join("")}</div>
-    <div class="oskrow">${rows[1].map(kb).join("")}</div>
-    <div class="oskrow">${rows[2].map(kb).join("")}</div>
-    <div class="oskrow"><button type="button" class="${OSK_SHIFT?'on':''}" onpointerdown="event.preventDefault()" onclick="oskShift()">⇧</button>${rows[3].map(kb).join("")}<button type="button" onpointerdown="event.preventDefault()" onclick="oskBack()">⌫</button></div>
-    <div class="oskrow"><button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('-')">-</button><button type="button" class="wide" onpointerdown="event.preventDefault()" onclick="oskKey(' ')">space</button><button type="button" onpointerdown="event.preventDefault()" onclick="oskKey('.')">.</button><button type="button" class="go" onpointerdown="event.preventDefault()" onclick="oskEnter()">Enter</button></div>`;
+    <div class="oskbar"><span>Typing</span><span class="val">${esc(val)||"&nbsp;"}</span><button type="button" class="done" data-act="done">Done</button></div>
+    <div class="oskrow">${rows[0].map(key).join("")}</div>
+    <div class="oskrow">${rows[1].length<10?'<span class="sp"></span>':""}${rows[1].map(key).join("")}${rows[1].length<10?'<span class="sp"></span>':""}</div>
+    <div class="oskrow">${r3}</div>
+    <div class="oskrow">
+      <button type="button" class="k fn" data-act="layer" data-layer="${OSK_LAYER==="abc"?"123":"abc"}">${OSK_LAYER==="abc"?"123":"ABC"}</button>
+      <button type="button" class="k space" data-ch=" ">space</button>
+      <button type="button" class="k go" data-act="enter">return</button>
+    </div>`;
 }
-function oskOpen(){ if(!OSK_TARGET) return; oskRender(); $("osk").classList.add("show"); $("oskFab").classList.remove("show"); }
-function oskKey(c){ if(!OSK_TARGET) return; const ch=(OSK_SHIFT&&/[a-z]/.test(c))?c.toUpperCase():c; OSK_TARGET.value=(OSK_TARGET.value||"")+ch; if(OSK_SHIFT) OSK_SHIFT=false; OSK_TARGET.dispatchEvent(new Event("input",{bubbles:true})); oskRender(); }
-function oskBack(){ if(!OSK_TARGET) return; OSK_TARGET.value=(OSK_TARGET.value||"").slice(0,-1); OSK_TARGET.dispatchEvent(new Event("input",{bubbles:true})); oskRender(); }
-function oskShift(){ OSK_SHIFT=!OSK_SHIFT; oskRender(); }
-function oskClose(){ $("osk").classList.remove("show"); $("oskFab").classList.remove("show"); }
+// Insert at the caret (not blindly at the end) so edits mid-string work.
+function oskInsert(ch){
+  const t=OSK_TARGET; if(!t) return;
+  const v=t.value||"";
+  let a=t.selectionStart, b=t.selectionEnd;
+  if(a==null||b==null){ a=b=v.length; }
+  t.value=v.slice(0,a)+ch+v.slice(b);
+  const pos=a+ch.length; try{ t.setSelectionRange(pos,pos); }catch(e){}
+  t.dispatchEvent(new Event("input",{bubbles:true}));
+}
+function oskBack(){
+  const t=OSK_TARGET; if(!t) return;
+  const v=t.value||"";
+  let a=t.selectionStart, b=t.selectionEnd;
+  if(a==null||b==null){ a=b=v.length; }
+  if(a===b){ if(a===0) return; t.value=v.slice(0,a-1)+v.slice(b); a--; }
+  else { t.value=v.slice(0,a)+v.slice(b); }
+  try{ t.setSelectionRange(a,a); }catch(e){}
+  t.dispatchEvent(new Event("input",{bubbles:true}));
+  oskRender();
+}
+function oskKey(c){ oskInsert(oskCap(c)); if(OSK_SHIFT&&!OSK_LOCK){ OSK_SHIFT=false; oskRender(); } else { oskBarOnly(); } }
+function oskBarOnly(){ const v=$("osk").querySelector(".val"); if(v) v.innerHTML=esc((OSK_TARGET&&OSK_TARGET.value)||"")||"&nbsp;"; }
+function oskShift(){
+  const now=Date.now();
+  if(now-OSK_SHIFT_TS<350){ OSK_LOCK=!OSK_LOCK; OSK_SHIFT=false; }      // double-tap → caps lock
+  else if(OSK_LOCK){ OSK_LOCK=false; OSK_SHIFT=false; }
+  else { OSK_SHIFT=!OSK_SHIFT; }
+  OSK_SHIFT_TS=now; oskRender();
+}
+function oskLayer(l){ OSK_LAYER=l; if(l!=="abc"){ OSK_SHIFT=false; OSK_LOCK=false; } oskRender(); }
+function oskOpen(){ if(!OSK_TARGET) return; OSK_LAYER="abc"; OSK_SHIFT=false; OSK_LOCK=false; oskRender();
+  $("osk").classList.add("show"); $("oskFab").classList.remove("show");
+  document.body.style.paddingBottom="300px"; }
+function oskClose(){ $("osk").classList.remove("show"); $("oskFab").classList.remove("show"); oskPopHide(); document.body.style.paddingBottom=""; }
 function oskEnter(){ const t=OSK_TARGET; oskClose(); if(t) t.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true})); }
+// iOS-style magnified bubble over the pressed key.
+function oskPopShow(btn,ch){
+  const p=$("oskPop"); const r=btn.getBoundingClientRect();
+  p.textContent=ch; p.style.display="block";
+  p.style.left=Math.round(r.left+r.width/2-Math.max(44,r.width)/2)+"px";
+  p.style.minWidth=Math.max(44,r.width)+"px";
+  p.style.top=Math.round(r.top-r.height-6)+"px";
+}
+function oskPopHide(){ $("oskPop").style.display="none"; }
+// One delegated handler for the whole keyboard: pointerdown keeps focus in the field and fires the key.
+$("osk").addEventListener("pointerdown",(e)=>{
+  const b=e.target.closest("button"); if(!b) return;
+  e.preventDefault();
+  const act=b.dataset.act, ch=b.dataset.ch;
+  if(ch!=null){ if(ch!==" ") oskPopShow(b,oskCap(ch)); oskKey(ch); return; }
+  if(act==="shift") return oskShift();
+  if(act==="layer") return oskLayer(b.dataset.layer);
+  if(act==="done") return oskClose();
+  if(act==="enter") return oskEnter();
+  if(act==="back"){ oskBack(); OSK_REPEAT=setTimeout(function rep(){ oskBack(); OSK_REPEAT=setTimeout(rep,90); },420); }
+});
+const oskRelease=()=>{ oskPopHide(); if(OSK_REPEAT){ clearTimeout(OSK_REPEAT); OSK_REPEAT=null; } };
+$("osk").addEventListener("pointerup",oskRelease);
+$("osk").addEventListener("pointercancel",oskRelease);
+$("osk").addEventListener("pointerleave",oskRelease);
+
+/* ---------- overstock cartons ---------- */
+async function osBatches(){
+  try{
+    const d=await api("/api/overstock");
+    const b=d.batches||[];
+    $("osbatches").innerHTML = b.length
+      ? '<div class="sectlabel">Loaded batches</div>'+b.map(x=>`<div class="row"><span class="k mono">${esc(x.batch||"—")}</span><span class="v">${x.skus} SKUs · ${x.boxes} boxes<span class="muted" style="margin-left:6px">${fmt(x.updated_at)}</span></span></div>`).join("")
+      : '<div class="note">Nothing uploaded yet.</div>';
+  }catch(e){}
+  try{
+    const l=(await api("/api/overstock/log")).log||[];
+    if(l.length) $("osbatches").innerHTML += '<div class="sectlabel">Recent changes</div>'+
+      l.slice(0,10).map(x=>`<div class="h"><span>${x.scope==="box"?`Box <span class="mono">${esc(x.from_box||"")}</span>`:`<span class="mono">${esc(x.sku||"")}</span>`} <span class="arrow">→</span> <span class="mono">${esc(x.to_box||"removed")}</span></span><span class="muted">${esc(x.user_name||"")} · ${fmt(x.ts)}</span></div>`).join("");
+  }catch(e){}
+}
+function osRows(items){
+  if(!items.length) return '<div class="card center muted">Nothing found.</div>';
+  return '<div class="card"><table><thead><tr><th>Item</th><th>Box</th></tr></thead><tbody>'+
+    items.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
+      <td><div>${esc(it.title||"")}${it.variant?` <span class="muted">· ${esc(it.variant)}</span>`:""}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div></td>
+      <td style="white-space:nowrap"><span class="mono"><b>${esc(it.box)}</b></span></td></tr>`).join("")+
+    '</tbody></table></div>';
+}
+async function osSearch(){
+  const q=$("osq").value.trim();
+  if(!q){ $("osres").innerHTML=""; return; }
+  $("osres").innerHTML='<div class="card center muted">Searching…</div>';
+  try{ const d=await api("/api/overstock?q="+encodeURIComponent(q)); $("osres").innerHTML=osRows(d.items||[]); }
+  catch(e){ $("osres").innerHTML='<div class="card center muted">Search failed.</div>'; }
+}
+function osEditClose(){ $("osEditModal").classList.remove("show"); }
+// Box-number editor. Uses an in-app field (data-osk) so the ⌨️ keyboard works with a scanner paired.
+function osEditOpen({title, note, value, placeholder, onSave, danger}){
+  const box=$("osEditBox");
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h3 style="flex:1">${esc(title)}</h3>
+      <button class="btn sec" onclick="osEditClose()" style="padding:6px 12px">✕</button>
+    </div>
+    <div class="note" style="margin-top:0">${note}</div>
+    <input id="osEditIn" data-osk="1" inputmode="none" autocomplete="off" autocapitalize="characters"
+      placeholder="${esc(placeholder||"Box number (e.g. 235-B)")}" value="${esc(value||"")}"
+      style="width:100%;box-sizing:border-box;margin-top:10px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px;font-size:16px">
+    <div class="moverow" style="margin-top:12px">
+      <button class="btn sec" onclick="osEditClose()">Cancel</button>
+      <button class="btn" style="flex:1" id="osEditSave">Save</button>
+    </div>
+    ${danger?`<button class="btn sec wide" style="margin-top:8px;color:var(--bad)" id="osEditClear">Remove from overstock</button>`:""}`;
+  $("osEditModal").classList.add("show");
+  const inp=$("osEditIn");
+  const go=()=>{ const v=inp.value.trim(); osEditClose(); onSave(v); };
+  $("osEditSave").onclick=go;
+  inp.onkeydown=(e)=>{ if(e.key==="Enter") go(); };
+  if(danger) $("osEditClear").onclick=()=>{ osEditClose(); onSave(""); };
+  if(!IS_TOUCH) setTimeout(()=>inp.focus(),60); else setTimeout(()=>{ inp.focus(); },60);
+}
+function editOverstock(sku, current){
+  osEditOpen({
+    title:"Overstock box", note:`Which carton holds <span class="mono">${esc(sku)}</span>?`,
+    value:current||"", danger:!!current,
+    onSave:(v)=>saveOverstock(sku, v),
+  });
+}
+async function saveOverstock(sku, val){
+  const box = (val!=null ? val : ($("osBoxIn")?$("osBoxIn").value:"")).trim();
+  try{
+    const r=await api("/api/overstock/set",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,box})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(r.cleared ? "Removed from overstock" : `Box set to ${r.box}`);
+    lookup(sku);
+  }catch(e){ toast("Couldn't save",true); }
+}
+function moveBox(from){
+  osEditOpen({
+    title:`Move box ${from}`, note:`Everything in carton <span class="mono">${esc(from)}</span> gets the new number.`,
+    value:"", placeholder:"New box number",
+    onSave:async(to)=>{
+      if(!to){ toast("Enter a box number",true); return; }
+      try{
+        const r=await api("/api/overstock/move-box",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,from,to})});
+        if(r.error){ toast(r.error,true); return; }
+        toast(`Moved ${r.moved} SKU${r.moved===1?"":"s"} → ${r.to}`);
+        showOverstockBox(r.to);
+      }catch(e){ toast("Move failed",true); }
+    },
+  });
+}
+async function showOverstockBox(box){
+  showTab("overstock"); $("osq").value=box;
+  $("osres").innerHTML='<div class="card center muted">Opening box '+esc(box)+'…</div>';
+  try{ const d=await api("/api/overstock/box/"+encodeURIComponent(box));
+    $("osres").innerHTML='<div class="sectlabel">Box '+esc(box)+' — '+d.count+' SKU'+(d.count===1?"":"s")+'</div>'+osRows(d.items||[])+
+      (d.count?'<div class="card"><button class="btn sec wide" onclick="moveBox('+JSON.stringify(box)+')">📦 Move this whole box to another number</button><div class="note">Re-labels every SKU in the carton at once.</div></div>':"");
+  }catch(e){ $("osres").innerHTML='<div class="card center muted">Couldn\'t open that box.</div>'; }
+}
+async function osUpload(){
+  const f=$("osfile").files[0];
+  if(!f){ toast("Pick a file first",true); return; }
+  const btn=$("osUp"), old=btn.textContent; btn.textContent="⏳ Uploading…"; btn.disabled=true;
+  try{
+    const r=await api("/api/overstock/import?name="+encodeURIComponent(f.name),
+      {method:"POST",headers:{"Content-Type":"application/octet-stream"},body:f});
+    if(r.error){ toast(r.error,true); }
+    else{ toast(`${r.rows} rows · ${r.imported} new, ${r.updated} updated${r.skipped?` · ${r.skipped} skipped`:""}`); $("osfile").value=""; osBatches(); }
+  }catch(e){ toast("Upload failed",true); }
+  finally{ btn.textContent=old; btn.disabled=false; }
+}
+
 async function syncInventory(){
   try{ const r=await api("/api/stock/sync-inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY})});
     if(r.running) toast(`Sync already running (${r.synced} so far)`); else toast("Inventory sync started — this can take a few minutes");
