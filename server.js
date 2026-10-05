@@ -156,20 +156,44 @@ async function migrate() {
     updated_at TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS ticket_id TEXT`);
+  await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS items JSONB`);            // every out-of-stock line on the order
+  await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
+  await db(`ALTER TABLE oos_cases ADD COLUMN IF NOT EXISTS followup_sent_at TIMESTAMPTZ`);
   // Overstock: which sealed carton a SKU's backstock is in. Loaded from the factory packing-list
   // workbook (the "BIN" sheet: Title / Option1 Value / Variant SKU / BIN#). One row per SKU.
-  await db(`CREATE TABLE IF NOT EXISTS overstock_bins (
+  await db(`CREATE TABLE IF NOT EXISTS overstock_cartons (
+    id BIGSERIAL PRIMARY KEY,
+    batch TEXT NOT NULL,
+    box TEXT NOT NULL,
+    item_code TEXT NOT NULL,
+    style TEXT,
+    color TEXT,
+    qty INTEGER,
+    source_file TEXT,
+    uploaded_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_cartons_box ON overstock_cartons(box)`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_cartons_code ON overstock_cartons(batch, item_code)`);
+  await db(`CREATE TABLE IF NOT EXISTS overstock_skus (
     sku TEXT PRIMARY KEY,
+    batch TEXT,
+    item_code TEXT,
     title TEXT,
     variant TEXT,
-    box TEXT,
-    batch TEXT,
+    shelf_bin TEXT,
     source_file TEXT,
     uploaded_by TEXT,
     updated_at TIMESTAMPTZ DEFAULT now()
   )`);
-  await db(`CREATE INDEX IF NOT EXISTS idx_overstock_box ON overstock_bins(box)`);
-  await db(`CREATE INDEX IF NOT EXISTS idx_overstock_batch ON overstock_bins(batch)`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_osku_code ON overstock_skus(batch, item_code)`);
+  await db(`CREATE TABLE IF NOT EXISTS overstock_manual (
+    sku TEXT PRIMARY KEY,
+    box TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`DROP TABLE IF EXISTS overstock_bins`);
   await db(`CREATE TABLE IF NOT EXISTS overstock_log (
     id BIGSERIAL PRIMARY KEY,
     sku TEXT,
@@ -570,36 +594,43 @@ const money = (n) => "$" + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2)
 function firstName(name) { const t = String(name || "").trim().split(/\s+/)[0]; return t && /^[A-Za-z]/.test(t) ? t : "there"; }
 // Build the full 3-option out-of-stock email (equal-value replacement / store credit +15% / refund).
 // The copy nudges toward replacement & credit since a refund is the least ideal outcome for us.
-function generateOosEmail({ brand, orderNumber, customerName, itemName, qty, unitPrice }) {
-  const value = Math.round((Number(unitPrice) || 0) * (Number(qty) || 1) * 100) / 100;
+// One email can cover every out-of-stock line on the order — nobody wants three emails about one package.
+function generateOosEmail({ brand, orderNumber, customerName, items }) {
+  const lines = (items || []).map((it) => ({ name: it.itemName || it.name, qty: Number(it.qty) || 1, value: Math.round((Number(it.unitPrice != null ? it.unitPrice : it.unit_price) || 0) * (Number(it.qty) || 1) * 100) / 100 }));
+  const value = Math.round(lines.reduce((a, l) => a + l.value, 0) * 100) / 100;
   const credit = Math.round(value * 1.15 * 100) / 100;
   const fn = firstName(customerName);
   const b = brand || "our team";
+  const many = lines.length > 1;
   const subject = `A quick update on your ${b} order #${orderNumber}`;
   const text = [
     `Hi ${fn},`, ``,
-    `Thank you so much for your order! I'm reaching out because one item is unexpectedly out of stock and won't be able to ship:`, ``,
-    `   • ${itemName}  (Qty ${qty}) — ${money(value)}`, ``,
+    many ? `Thank you so much for your order! I'm reaching out because ${lines.length} items are unexpectedly out of stock and won't be able to ship:`
+         : `Thank you so much for your order! I'm reaching out because one item is unexpectedly out of stock and won't be able to ship:`, ``,
+    ...lines.map((l) => `   • ${l.name}  (Qty ${l.qty}) — ${money(l.value)}`), ``,
     `I'm so sorry for the inconvenience — I'd love to make this right. You've got a few options, so just reply and let me know which you'd prefer:`, ``,
-    `1) Equal-value replacement — pick any in-stock item(s) up to ${money(value)} and we'll send it in place of this one, at no extra charge.`, ``,
+    `1) Equal-value replacement — pick any in-stock item(s) up to ${money(value)} and we'll send ${many ? "them" : "it"} in place of ${many ? "these" : "this one"}, at no extra charge.`, ``,
     `2) Store credit + 15% extra — we'll add ${money(credit)} in store credit to your account. That's the full ${money(value)} value plus a 15% bonus for the trouble. It never expires and works on any future order.`, ``,
     `3) A refund of ${money(value)} back to your original payment.`, ``,
     `Most customers go with option 1 or 2 — you still get something you'll love, and the credit gives you a little extra to play with. Whichever you pick, just reply to this email and I'll take care of it right away.`, ``,
     `Thanks so much for your patience, and for shopping with ${b}!`, ``,
     `Warmly,`, `The ${b} Team`,
   ].join("\n");
-  return { subject, text, item_value: value, credit_value: credit };
+  return { subject, text, item_value: value, credit_value: credit, lines };
 }
-// Find one item on an order and assemble everything the OOS draft needs.
-async function oosContext(orderCode, sku) {
+// Find one or more items on an order and assemble everything the OOS draft needs.
+async function oosContext(orderCode, skus) {
   const pl = await buildPickList(orderCode);
   if (!pl.found) return { found: false, code: orderCode };
-  const item = (pl.items || []).find((i) => String(i.sku).toLowerCase() === String(sku).toLowerCase());
-  if (!item) return { found: false, code: orderCode, no_item: true };
-  const draft = generateOosEmail({ brand: pl.brand, orderNumber: pl.order_number, customerName: pl.ship_to, itemName: item.name, qty: item.qty, unitPrice: item.unit_price });
+  const want = (Array.isArray(skus) ? skus : String(skus || "").split(",")).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const items = (pl.items || []).filter((i) => want.includes(String(i.sku).toLowerCase()));
+  if (!items.length) return { found: false, code: orderCode, no_item: true };
+  const draft = generateOosEmail({ brand: pl.brand, orderNumber: pl.order_number, customerName: pl.ship_to, items: items.map((i) => ({ itemName: i.name, qty: i.qty, unitPrice: i.unit_price })) });
   return {
     found: true, order_number: pl.order_number, brand: pl.brand, customer_name: pl.ship_to, customer_email: pl.customer_email,
-    item: { sku: item.sku, name: item.name, qty: item.qty, unit_price: item.unit_price, bin: item.bin, on_hand: item.on_hand },
+    item: { sku: items[0].sku, name: items[0].name, qty: items[0].qty, unit_price: items[0].unit_price, bin: items[0].bin, on_hand: items[0].on_hand },
+    items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, unit_price: i.unit_price, bin: i.bin, on_hand: i.on_hand })),
+    all_items: (pl.items || []).map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, unit_price: i.unit_price, on_hand: i.on_hand })),
     ...draft,
   };
 }
@@ -686,92 +717,229 @@ app.get("/api/order", async (req, res) => {
   try { res.json(await buildPickList(req.query.code)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-/* --------------------------------------- Overstock cartons --------------------------------------- */
-// Read the "BIN" sheet of a factory packing-list workbook (or a CSV with the same columns).
-// Headers are matched loosely so a re-ordered or re-named export still imports.
-function parseOverstockSheet(buf, filename) {
+/* --------------------------------------- Overstock cartons ---------------------------------------
+ * Source: the factory packing-list workbook.
+ *   "…PL" sheet  → one row per line-item, with BOX NO. filled in only on a carton's FIRST row
+ *                  (every following row without a box number belongs to that same carton), and an
+ *                  ITEM CODE that identifies a style + colour (e.g. LB81CN26X193 = Women's PJ in
+ *                  Seasonal Classics). Its size columns are NOT reliable — the factory fills the
+ *                  leftmost free column rather than the labelled one (a One Size blanket lands in
+ *                  both "18-24m" and "90*60"), so carton data is tracked at style+colour level.
+ *   "BIN" sheet  → the SKU dictionary: Title / Option1 Value / Variant SKU / BIN#. BIN# is the
+ *                  warehouse SHELF bin, which the app already tracks, so it is stored for
+ *                  reference only and never overwrites item_location.
+ * A SKU's item code is the packing-list code that all of that product's SKUs start with. */
+function parseOverstockWorkbook(buf, filename) {
   const XLSX = require("xlsx");
   const wb = XLSX.read(buf, { type: "buffer" });
-  const sheetName = wb.SheetNames.find((n) => /^bin/i.test(n)) || wb.SheetNames.find((n) => /bin/i.test(n)) || wb.SheetNames[wb.SheetNames.length - 1];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
-  if (!rows.length) throw new Error(`sheet "${sheetName}" is empty`);
-  const headers = Object.keys(rows[0]);
-  const find = (re) => headers.find((h) => re.test(String(h).trim()));
-  const hSku = find(/variant\s*sku|^sku$/i) || find(/sku/i);
-  const hBox = find(/^bin\s*#?$/i) || find(/bin|box|carton/i);
-  const hTitle = find(/^title$|product|style/i);
-  const hVar = find(/option1|variant|size/i);
-  if (!hSku || !hBox) throw new Error(`couldn't find a SKU column and a BIN column in sheet "${sheetName}" (saw: ${headers.join(", ")})`);
-  const out = [], seen = new Set();
-  let skipped = 0;
-  for (const r of rows) {
+  const binName = wb.SheetNames.find((n) => /^bin$/i.test(n)) || wb.SheetNames.find((n) => /bin/i.test(n));
+  const plName = wb.SheetNames.find((n) => n !== binName && /pl|pack/i.test(n)) || wb.SheetNames.find((n) => n !== binName);
+  if (!binName) throw new Error(`no "BIN" sheet in this workbook (found: ${wb.SheetNames.join(", ")})`);
+  if (!plName) throw new Error(`no packing-list sheet in this workbook (found: ${wb.SheetNames.join(", ")})`);
+
+  // ---- BIN sheet → SKUs
+  const binRows = XLSX.utils.sheet_to_json(wb.Sheets[binName], { defval: "" });
+  if (!binRows.length) throw new Error(`sheet "${binName}" is empty`);
+  const bh = Object.keys(binRows[0]);
+  const bfind = (re) => bh.find((h) => re.test(String(h).trim()));
+  const hSku = bfind(/variant\s*sku|^sku$/i) || bfind(/sku/i);
+  const hShelf = bfind(/^bin\s*#?$/i) || bfind(/bin/i);
+  const hTitle = bfind(/^title$/i) || bfind(/title|product/i);
+  const hOpt = bfind(/option1|variant|size/i);
+  if (!hSku || !hTitle) throw new Error(`sheet "${binName}" needs a Title column and a Variant SKU column (saw: ${bh.join(", ")})`);
+  const skus = [], seen = new Set();
+  for (const r of binRows) {
     const sku = String(r[hSku] == null ? "" : r[hSku]).trim();
-    const box = String(r[hBox] == null ? "" : r[hBox]).trim();
-    if (!sku || !box) { skipped++; continue; }
-    if (seen.has(sku.toLowerCase())) { skipped++; continue; }   // a duplicated SKU row would otherwise win silently
+    const title = String(r[hTitle] == null ? "" : r[hTitle]).trim();
+    if (!sku || seen.has(sku.toLowerCase())) continue;
     seen.add(sku.toLowerCase());
-    out.push({
-      sku, box,
-      title: hTitle ? String(r[hTitle] == null ? "" : r[hTitle]).trim() : null,
-      variant: hVar ? String(r[hVar] == null ? "" : r[hVar]).trim() : null,
+    skus.push({
+      sku, title,
+      variant: hOpt ? String(r[hOpt] == null ? "" : r[hOpt]).trim() : null,
+      shelf_bin: hShelf ? String(r[hShelf] == null ? "" : r[hShelf]).trim() : null,
     });
   }
-  const batch = (String(filename || "").match(/[A-Za-z]{2}\d{2,}/) || [])[0] || null;
-  return { rows: out, skipped, sheet: sheetName, batch };
+  if (!skus.length) throw new Error(`no SKUs found in sheet "${binName}"`);
+
+  // ---- packing list → cartons. Two header rows, so read as a grid and locate the columns.
+  const grid = XLSX.utils.sheet_to_json(wb.Sheets[plName], { header: 1, defval: "" });
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+  let hdr = -1, cCode = -1, cBox = -1, cStyle = -1, cColor = -1, cUnits = -1;
+  for (let i = 0; i < Math.min(grid.length, 12); i++) {
+    const row = grid[i].map(norm);
+    const code = row.findIndex((v) => /item\s*code/i.test(v));
+    const box = row.findIndex((v) => /box\s*no/i.test(v));
+    if (code >= 0 && box >= 0) {
+      hdr = i; cCode = code; cBox = box;
+      cStyle = row.findIndex((v) => /style\s*name/i.test(v));
+      cColor = row.findIndex((v) => /^color|colour/i.test(v));
+      cUnits = row.findIndex((v) => /units/i.test(v));
+      break;
+    }
+  }
+  if (hdr < 0) throw new Error(`sheet "${plName}" has no "ITEM CODE" + "BOX NO." header row`);
+  // Quantity columns: everything between the item code and the units/box column that holds numbers.
+  const qFrom = cCode + 1;
+  const qTo = (cUnits > cCode ? cUnits : cBox) - 1;
+  const cartons = [];
+  let box = null;
+  for (let i = hdr + 1; i < grid.length; i++) {
+    const row = grid[i];
+    const bv = norm(row[cBox]);
+    if (bv) box = bv;                                     // a new carton starts; blanks continue the last one
+    const code = norm(row[cCode]);
+    if (!code || box == null) continue;
+    let qty = 0;
+    for (let c = qFrom; c <= qTo; c++) { const n = Number(row[c]); if (Number.isFinite(n) && n > 0) qty += n; }
+    if (!qty) continue;
+    cartons.push({
+      box, item_code: code, qty,
+      style: cStyle >= 0 ? norm(row[cStyle]).split("\n")[0] : null,
+      color: cColor >= 0 ? norm(row[cColor]).split("\n")[0] : null,
+    });
+  }
+  if (!cartons.length) throw new Error(`no carton rows found in sheet "${plName}"`);
+
+  // ---- join: each product's SKUs share one packing-list item code (their common prefix).
+  const codes = [...new Set(cartons.map((c) => c.item_code))];
+  const byTitle = new Map();
+  for (const s of skus) { if (!byTitle.has(s.title)) byTitle.set(s.title, []); byTitle.get(s.title).push(s); }
+  const commonPrefix = (list) => {
+    let a = list[0];
+    for (const b of list) { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; a = a.slice(0, i); }
+    return a;
+  };
+  let matched = 0;
+  const unmatched = [];
+  for (const [title, group] of byTitle) {
+    const pre = commonPrefix(group.map((g) => g.sku));
+    let code = codes.includes(pre) ? pre : null;
+    if (!code) {                                          // single-SKU products: longest code that prefixes them all
+      const cands = codes.filter((c) => group.every((g) => g.sku.startsWith(c)));
+      code = cands.sort((a, b) => b.length - a.length)[0] || null;
+    }
+    for (const g of group) g.item_code = code;
+    if (code) matched += group.length; else unmatched.push(title);
+  }
+  const batch = (String(filename || "").match(/[A-Za-z]{2}\d{2,}/) || [])[0] ||
+                (codes[0] && (codes[0].match(/^[A-Za-z]{2}\d{2,}/) || [])[0]) || "batch";
+  return { batch, sheet_bin: binName, sheet_pl: plName, skus, cartons, matched, unmatched, boxes: [...new Set(cartons.map((c) => c.box))].length };
 }
-// Upload a packing-list workbook. The body is the raw file; ?name= carries the filename.
+
+// Upload a packing-list workbook. Body is the raw file; ?name= carries the filename.
+// Re-uploading the same batch replaces it, so a corrected sheet is just another upload.
 app.post("/api/overstock/import", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const buf = req.body;
     if (!buf || !buf.length || !Buffer.isBuffer(buf)) return res.status(400).json({ error: "no file received" });
     const filename = String(req.query.name || "upload.xlsx");
-    const { rows, skipped, sheet, batch } = parseOverstockSheet(buf, filename);
-    if (!rows.length) return res.status(400).json({ error: `no usable rows in sheet "${sheet}"` });
+    const p = parseOverstockWorkbook(buf, filename);
     const by = actorOf(req);
-    let imported = 0, updated = 0;
-    for (const r of rows) {
-      const q = await db(
-        `INSERT INTO overstock_bins (sku,title,variant,box,batch,source_file,uploaded_by,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,now())
-         ON CONFLICT (sku) DO UPDATE SET title=EXCLUDED.title, variant=EXCLUDED.variant, box=EXCLUDED.box,
-           batch=EXCLUDED.batch, source_file=EXCLUDED.source_file, uploaded_by=EXCLUDED.uploaded_by, updated_at=now()
-         RETURNING (xmax = 0) AS inserted`,
-        [r.sku, r.title, r.variant, r.box, batch, filename, by]
-      );
-      if (q.rows[0] && q.rows[0].inserted) imported++; else updated++;
+    await db(`DELETE FROM overstock_cartons WHERE batch=$1`, [p.batch]);
+    await db(`DELETE FROM overstock_skus WHERE batch=$1`, [p.batch]);
+    for (const c of p.cartons) {
+      await db(`INSERT INTO overstock_cartons (batch,box,item_code,style,color,qty,source_file,uploaded_by)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [p.batch, c.box, c.item_code, c.style, c.color, c.qty, filename, by]);
     }
-    res.json({ ok: true, sheet, batch, file: filename, rows: rows.length, imported, updated, skipped, boxes: [...new Set(rows.map((r) => r.box))].length });
+    for (const s of p.skus) {
+      await db(`INSERT INTO overstock_skus (sku,batch,item_code,title,variant,shelf_bin,source_file,uploaded_by)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (sku) DO UPDATE SET batch=EXCLUDED.batch, item_code=EXCLUDED.item_code, title=EXCLUDED.title,
+                  variant=EXCLUDED.variant, shelf_bin=EXCLUDED.shelf_bin, source_file=EXCLUDED.source_file,
+                  uploaded_by=EXCLUDED.uploaded_by, updated_at=now()`,
+        [s.sku, p.batch, s.item_code || null, s.title, s.variant, s.shelf_bin, filename, by]);
+    }
+    res.json({
+      ok: true, batch: p.batch, file: filename, sheets: { bin: p.sheet_bin, packing_list: p.sheet_pl },
+      skus: p.skus.length, matched: p.matched, unmatched: p.unmatched, cartons: p.cartons.length,
+      boxes: p.boxes, units: p.cartons.reduce((n, c) => n + c.qty, 0),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Look up overstock by SKU, by box, or by batch — one endpoint, whatever was scanned or typed.
+// Remove an uploaded packing list entirely (manual box overrides are left alone).
+app.delete("/api/overstock/batch/:batch", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const batch = String(req.params.batch || "").trim();
+    if (!batch) return res.status(400).json({ error: "batch required" });
+    const c = await db(`DELETE FROM overstock_cartons WHERE lower(batch)=lower($1) RETURNING id`, [batch]);
+    const s = await db(`DELETE FROM overstock_skus WHERE lower(batch)=lower($1) RETURNING sku`, [batch]);
+    if (!c.rows.length && !s.rows.length) return res.status(404).json({ error: `no upload named ${batch}` });
+    await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES (NULL,$1,NULL,'batch-delete',$2)`, [batch, actorOf(req)]);
+    res.json({ ok: true, batch, cartons: c.rows.length, skus: s.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// A SKU's cartons: a manual override wins; otherwise every carton holding that style + colour.
+async function overstockFor(sku) {
+  try {
+    const man = await db(`SELECT box FROM overstock_manual WHERE lower(sku)=lower($1)`, [sku]);
+    const rec = await db(`SELECT batch,item_code,title,variant FROM overstock_skus WHERE lower(sku)=lower($1)`, [sku]);
+    const r = rec.rows[0];
+    let boxes = [];
+    if (r && r.item_code) {
+      const b = await db(`SELECT box, sum(qty)::int AS qty FROM overstock_cartons
+                          WHERE batch=$1 AND item_code=$2 GROUP BY box
+                          ORDER BY (CASE WHEN box ~ '^[0-9]+$' THEN box::int END), box`, [r.batch, r.item_code]);
+      boxes = b.rows;
+    }
+    if (!man.rows.length && !boxes.length) return null;
+    return {
+      manual_box: man.rows[0] ? man.rows[0].box : null,
+      boxes, batch: r ? r.batch : null, item_code: r ? r.item_code : null,
+      units: boxes.reduce((n, x) => n + (x.qty || 0), 0),
+      level: "style+colour",
+    };
+  } catch (e) { return null; }
+}
+// Search: a SKU, a box number, a batch, or part of a product name.
 app.get("/api/overstock", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const q = String(req.query.q || "").trim();
     if (!q) {
-      const r = await db(`SELECT batch, count(*)::int AS skus, count(DISTINCT box)::int AS boxes, max(updated_at) AS updated_at, max(source_file) AS source_file
-                          FROM overstock_bins GROUP BY batch ORDER BY max(updated_at) DESC`);
-      return res.json({ batches: r.rows });
+      const r = await db(`SELECT s.batch, max(s.source_file) AS source_file, count(*)::int AS skus, max(s.updated_at) AS updated_at,
+                                 (SELECT count(DISTINCT box)::int FROM overstock_cartons c WHERE c.batch=s.batch) AS boxes,
+                                 (SELECT sum(qty)::int FROM overstock_cartons c WHERE c.batch=s.batch) AS units
+                          FROM overstock_skus s GROUP BY s.batch ORDER BY max(s.updated_at) DESC`);
+      const m = await db(`SELECT count(*)::int AS n FROM overstock_manual`);
+      return res.json({ batches: r.rows, manual: m.rows[0] ? m.rows[0].n : 0 });
     }
     const r = await db(
-      `SELECT sku,title,variant,box,batch,updated_at FROM overstock_bins
-       WHERE lower(sku)=lower($1) OR lower(box)=lower($1) OR lower(batch)=lower($1)
-          OR sku ILIKE '%'||$1||'%' OR title ILIKE '%'||$1||'%'
-       ORDER BY box, sku LIMIT 300`, [q]);
-    res.json({ items: r.rows, count: r.rows.length });
+      `SELECT s.sku, s.title, s.variant, s.batch, s.item_code, m.box AS manual_box,
+              (SELECT string_agg(t.box, ', ' ORDER BY t.k) FROM (SELECT DISTINCT c.box, (CASE WHEN c.box ~ '^[0-9]+$' THEN lpad(c.box,8,'0') ELSE c.box END) AS k FROM overstock_cartons c WHERE c.batch=s.batch AND c.item_code=s.item_code) t) AS boxes
+         FROM overstock_skus s
+         LEFT JOIN overstock_manual m ON lower(m.sku)=lower(s.sku)
+        WHERE lower(s.sku)=lower($1) OR lower(s.batch)=lower($1) OR lower(m.box)=lower($1)
+           OR s.sku ILIKE '%'||$1||'%' OR s.title ILIKE '%'||$1||'%'
+           OR EXISTS (SELECT 1 FROM overstock_cartons c WHERE c.batch=s.batch AND c.item_code=s.item_code AND lower(c.box)=lower($1))
+        ORDER BY s.title, s.sku LIMIT 300`, [q]);
+    // Manual entries survive a deleted upload, so surface them even with no packing list behind them.
+    const man = await db(
+      `SELECT m.sku, NULL::text AS title, NULL::text AS variant, NULL::text AS batch, NULL::text AS item_code,
+              m.box AS manual_box, NULL::text AS boxes
+         FROM overstock_manual m
+        WHERE (lower(m.sku)=lower($1) OR lower(m.box)=lower($1) OR m.sku ILIKE '%'||$1||'%')
+          AND NOT EXISTS (SELECT 1 FROM overstock_skus s WHERE lower(s.sku)=lower(m.sku))
+        ORDER BY m.sku LIMIT 100`, [q]);
+    res.json({ items: [...r.rows, ...man.rows], count: r.rows.length + man.rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Everything in one carton.
+// What is inside one carton.
 app.get("/api/overstock/box/:box", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const r = await db(`SELECT sku,title,variant,box,batch FROM overstock_bins WHERE lower(box)=lower($1) ORDER BY sku`, [req.params.box]);
-    res.json({ box: req.params.box, items: r.rows, count: r.rows.length });
+    const box = String(req.params.box || "").trim();
+    const lines = await db(
+      `SELECT c.box, c.item_code, c.qty, c.style, c.color, c.batch,
+              (SELECT string_agg(s.variant, ', ') FROM overstock_skus s WHERE s.batch=c.batch AND s.item_code=c.item_code) AS sizes,
+              (SELECT min(s.title) FROM overstock_skus s WHERE s.batch=c.batch AND s.item_code=c.item_code) AS title
+         FROM overstock_cartons c WHERE lower(c.box)=lower($1) ORDER BY c.item_code`, [box]);
+    const manual = await db(`SELECT sku, box FROM overstock_manual WHERE lower(box)=lower($1) ORDER BY sku`, [box]);
+    res.json({ box, lines: lines.rows, manual: manual.rows, count: lines.rows.length, units: lines.rows.reduce((n, x) => n + (x.qty || 0), 0) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Change one SKU's carton by hand (the sheet is the source of truth until someone moves a box).
-// An empty box clears the SKU from overstock entirely. Every change is logged.
+// Set or clear a manual carton for one SKU (overrides the packing list for that SKU only).
 app.post("/api/overstock/set", async (req, res) => {
   if (!guard(req, res)) return;
   try {
@@ -779,26 +947,20 @@ app.post("/api/overstock/set", async (req, res) => {
     const box = String((req.body && req.body.box) || "").trim();
     if (!sku) return res.status(400).json({ error: "sku required" });
     const by = actorOf(req);
-    const prev = await db(`SELECT box FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]);
+    const prev = await db(`SELECT box FROM overstock_manual WHERE lower(sku)=lower($1)`, [sku]);
     const fromBox = prev.rows[0] ? prev.rows[0].box : null;
     if (!box) {
-      await db(`DELETE FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]);
+      await db(`DELETE FROM overstock_manual WHERE lower(sku)=lower($1)`, [sku]);
       await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES ($1,$2,NULL,'sku',$3)`, [sku, fromBox, by]);
       return res.json({ ok: true, sku, box: null, cleared: true, from_box: fromBox });
     }
-    const title = (req.body && req.body.title) || null, variant = (req.body && req.body.variant) || null;
-    await db(
-      `INSERT INTO overstock_bins (sku,title,variant,box,batch,source_file,uploaded_by,updated_at)
-       VALUES ($1,$2,$3,$4,NULL,'manual',$5,now())
-       ON CONFLICT (sku) DO UPDATE SET box=EXCLUDED.box, uploaded_by=EXCLUDED.uploaded_by, updated_at=now(),
-         title=COALESCE(overstock_bins.title, EXCLUDED.title), variant=COALESCE(overstock_bins.variant, EXCLUDED.variant)`,
-      [sku, title, variant, box, by]
-    );
+    await db(`INSERT INTO overstock_manual (sku,box,updated_by,updated_at) VALUES ($1,$2,$3,now())
+              ON CONFLICT (sku) DO UPDATE SET box=EXCLUDED.box, updated_by=EXCLUDED.updated_by, updated_at=now()`, [sku, box, by]);
     await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES ($1,$2,$3,'sku',$4)`, [sku, fromBox, box, by]);
     res.json({ ok: true, sku, box, from_box: fromBox });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Re-label a whole carton — everything in `from` moves to `to`. This is the common case when a box is moved.
+// Re-label a whole carton — the common case when a box is physically moved.
 app.post("/api/overstock/move-box", async (req, res) => {
   if (!guard(req, res)) return;
   try {
@@ -807,10 +969,11 @@ app.post("/api/overstock/move-box", async (req, res) => {
     if (!from || !to) return res.status(400).json({ error: "from and to required" });
     if (from.toLowerCase() === to.toLowerCase()) return res.status(400).json({ error: "that's the same box" });
     const by = actorOf(req);
-    const r = await db(`UPDATE overstock_bins SET box=$2, updated_at=now(), uploaded_by=$3 WHERE lower(box)=lower($1) RETURNING sku`, [from, to, by]);
-    if (!r.rows.length) return res.status(404).json({ error: `no overstock in box ${from}` });
+    const c = await db(`UPDATE overstock_cartons SET box=$2 WHERE lower(box)=lower($1) RETURNING id`, [from, to]);
+    const m = await db(`UPDATE overstock_manual SET box=$2, updated_at=now(), updated_by=$3 WHERE lower(box)=lower($1) RETURNING sku`, [from, to, by]);
+    if (!c.rows.length && !m.rows.length) return res.status(404).json({ error: `nothing is in box ${from}` });
     await db(`INSERT INTO overstock_log (sku,from_box,to_box,scope,user_name) VALUES (NULL,$1,$2,'box',$3)`, [from, to, by]);
-    res.json({ ok: true, from, to, moved: r.rows.length });
+    res.json({ ok: true, from, to, moved: c.rows.length + m.rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Recent manual changes, newest first.
@@ -821,37 +984,36 @@ app.get("/api/overstock/log", async (req, res) => {
     res.json({ log: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-async function overstockFor(sku) {
-  try { const r = await db(`SELECT box,batch,updated_at FROM overstock_bins WHERE lower(sku)=lower($1)`, [sku]); return r.rows[0] || null; }
-  catch (e) { return null; }
-}
 
 // Out of stock — preview the drafted customer email for one item on an order.
 app.get("/api/oos/preview", async (req, res) => {
   if (!guard(req, res)) return;
-  try { res.json(await oosContext(req.query.order, req.query.sku)); }
+  try { res.json(await oosContext(req.query.order, req.query.skus || req.query.sku)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Out of stock — record the case (with the approved/edited draft) and notify Jose in Slack for approval.
+// Out of stock — record the case (with the approved/edited draft). The Helpdesk sends it to the customer automatically.
 app.post("/api/oos/create", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const { order, sku, subject, text } = req.body || {};
-    if (!order || !sku) return res.status(400).json({ error: "order and sku required" });
-    const ctx = await oosContext(order, sku);
-    if (!ctx.found) return res.status(404).json({ error: ctx.no_item ? "item not on that order" : "order not found" });
+    const { order, sku, skus, subject, text } = req.body || {};
+    const list = Array.isArray(skus) && skus.length ? skus : (sku ? [sku] : []);
+    if (!order || !list.length) return res.status(400).json({ error: "order and at least one sku required" });
+    const ctx = await oosContext(order, list);
+    if (!ctx.found) return res.status(404).json({ error: ctx.no_item ? "none of those items are on that order" : "order not found" });
     const subj = (subject && String(subject).trim()) || ctx.subject;
     const body = (text && String(text).trim()) || ctx.text;
     const by = actorOf(req);
+    const names = ctx.items.map((i) => i.name).join(" + ");
     const ins = await db(
-      `INSERT INTO oos_cases (order_number,sku,item_name,qty,unit_price,item_value,credit_value,brand,customer_name,customer_email,email_subject,email_text,status,created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',$13) RETURNING id`,
-      [ctx.order_number, ctx.item.sku, ctx.item.name, ctx.item.qty, ctx.item.unit_price, ctx.item_value, ctx.credit_value, ctx.brand, ctx.customer_name, ctx.customer_email, subj, body, by]
+      `INSERT INTO oos_cases (order_number,sku,item_name,qty,unit_price,item_value,credit_value,brand,customer_name,customer_email,email_subject,email_text,status,created_by,items)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',$13,$14) RETURNING id`,
+      [ctx.order_number, ctx.items.map((i) => i.sku).join(","), names, ctx.items.reduce((a, i) => a + (Number(i.qty) || 1), 0), ctx.items.length === 1 ? ctx.items[0].unit_price : null,
+       ctx.item_value, ctx.credit_value, ctx.brand, ctx.customer_name, ctx.customer_email, subj, body, by, JSON.stringify(ctx.items)]
     );
     const caseId = ins.rows[0].id;
-    // The case row IS the hand-off: Emily polls oos_cases and posts the Slack approval card
-    // (Apply = send to the customer). We don't post to Slack here — Emily is the single voice.
-    res.json({ ok: true, case_id: caseId, queued: true, subject: subj, text: body, item_value: ctx.item_value, credit_value: ctx.credit_value });
+    // The case row IS the hand-off: the Helpdesk picks it up within a minute, emails the customer from the brand
+    // mailbox, opens a ticket for the reply, and follows up itself after 48 hours of silence.
+    res.json({ ok: true, case_id: caseId, queued: true, auto_send: true, subject: subj, text: body, item_value: ctx.item_value, credit_value: ctx.credit_value, items: ctx.items.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Out of stock — recent cases (for a future review view).
@@ -966,7 +1128,13 @@ app.get("/api/find", async (req, res) => {
     const binBySku = {};
     if (skus.length) { const b = await db(`SELECT sku,bin FROM item_location WHERE sku = ANY($1)`, [skus]); for (const r of b.rows) binBySku[r.sku] = r.bin; }
     const osBySku = {};
-    if (skus.length) { const o = await db(`SELECT sku,box FROM overstock_bins WHERE sku = ANY($1)`, [skus]); for (const r of o.rows) osBySku[r.sku] = r.box; }
+    if (skus.length) {
+      const o = await db(
+        `SELECT s.sku, COALESCE(m.box, (SELECT string_agg(t.box, ', ' ORDER BY t.k) FROM (SELECT DISTINCT c.box, (CASE WHEN c.box ~ '^[0-9]+$' THEN lpad(c.box,8,'0') ELSE c.box END) AS k FROM overstock_cartons c WHERE c.batch=s.batch AND c.item_code=s.item_code) t)) AS box
+           FROM overstock_skus s LEFT JOIN overstock_manual m ON lower(m.sku)=lower(s.sku)
+          WHERE s.sku = ANY($1)`, [skus]);
+      for (const r of o.rows) osBySku[r.sku] = r.box;
+    }
     rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null, overstock_box: r.sku ? (osBySku[r.sku] || null) : null }));
     rows.sort((a, b) => (a.title || "").localeCompare(b.title || "") || (a.brand || "").localeCompare(b.brand || ""));
     res.json({ items: rows, count: rows.length });
