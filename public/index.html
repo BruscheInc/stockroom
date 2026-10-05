@@ -283,15 +283,15 @@
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Find overstock</div>
       <div class="moverow">
-        <input id="osq" data-osk="1" inputmode="none" placeholder="SKU, box (235-B) or batch (LB81)…" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')osSearch()" style="flex:1;min-width:150px">
+        <input id="osq" data-osk="1" inputmode="none" placeholder="SKU, carton number or product name…" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')osSearch()" style="flex:1;min-width:150px">
         <button class="btn" onclick="osSearch()">Search</button>
       </div>
-      <div class="note">Scanning a SKU anywhere in the app also shows its carton.</div>
+      <div class="note">Scanning a SKU anywhere in the app also shows its cartons.</div>
     </div>
     <div id="osres"></div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Upload a packing list</div>
-      <div class="note" style="margin-top:0">Pick the factory workbook (.xlsx) or a CSV. The app reads the <b>BIN</b> sheet — Title · Option1 Value · Variant SKU · BIN#. Re-uploading the same batch updates it.</div>
+      <div class="note" style="margin-top:0">Pick the factory workbook (.xlsx) or a CSV. The app reads both sheets — the packing list for carton numbers, the <b>BIN</b> sheet for the SKU list. Re-uploading replaces that packing list.</div>
       <input type="file" id="osfile" accept=".xlsx,.xls,.csv" style="width:100%;margin-top:10px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:10px;font-size:14px">
       <button class="btn wide" id="osUp" style="margin-top:10px" onclick="osUpload()">Upload</button>
       <div id="osbatches" style="margin-top:12px"></div>
@@ -499,7 +499,10 @@ function renderItem(d){
   const chips = bins.length ? bins.map(bn=>`<span class="binchip">📍 ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin">✕</button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
   const binPill = bins.length ? `<span class="pill bin">📍 ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
   // Overstock carton — shown the moment an item is scanned. Blank when nothing has been uploaded for it.
-  const osPill = d.overstock ? `<span class="pill bin" style="cursor:pointer" onclick="showOverstockBox('${esc(d.overstock.box)}')">📦 Box ${esc(d.overstock.box)}</span>` : "";
+  const os = d.overstock;
+  const osBoxes = os ? (os.manual_box ? [{box:os.manual_box,qty:null}] : (os.boxes||[])) : [];
+  const osPill = osBoxes.length
+    ? `<span class="pill bin" style="cursor:pointer" onclick="showOverstockBox('${esc(osBoxes[0].box)}')">📦 Box ${esc(osBoxes.map(b=>b.box).join(", "))}</span>` : "";
   $("result").innerHTML=`
     <div class="card">
       <div class="itemhead">
@@ -522,17 +525,19 @@ function renderItem(d){
           <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
         </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
         : `<div class="note">Max 3 bins — remove one (✕) to add another.</div>`}
-      <div class="sectlabel">Overstock carton</div>
-      ${d.overstock ? `<div class="chipwrap">
-          <span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(d.overstock.box)}')">📦 Box ${esc(d.overstock.box)}${d.overstock.batch?` · ${esc(d.overstock.batch)}`:""}</span>
-          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(d.overstock.box)}')">✏️ Change</button>
+      <div class="sectlabel">Overstock cartons</div>
+      ${osBoxes.length ? `<div class="chipwrap">
+          ${osBoxes.map(b=>`<span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(b.box)}')">📦 ${esc(b.box)}${b.qty!=null?` <span class="muted">${b.qty}</span>`:""}</span>`).join("")}
+          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(os.manual_box||"")}')">✏️ Change</button>
         </div>
-        <div class="note">Tap the box to see everything else inside it. Change it if the carton was moved or re-labelled.</div>`
+        <div class="note">${os.manual_box
+          ? `Set by hand — overrides the packing list.`
+          : `From packing list <b>${esc(os.batch||"")}</b> (${esc(os.item_code||"")}). Cartons are packed by print, not by size, so the same cartons hold every size of this print — ${os.units||0} units in total. Tap a carton to see what's inside.`}</div>`
         : `<div class="chipwrap">
-          <span class="muted">No overstock box.</span>
-          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','')">Set box</button>
+          <span class="muted">No overstock carton.</span>
+          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','')">Set carton</button>
         </div>
-        <div class="note">Nothing uploaded for this SKU. Upload its packing list under Overstock, or set a box by hand.</div>`}
+        <div class="note">Nothing uploaded for this SKU. Upload its packing list under Overstock, or set a carton by hand.</div>`}
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Location history</div>
@@ -1107,21 +1112,31 @@ async function osBatches(){
     const d=await api("/api/overstock");
     const b=d.batches||[];
     $("osbatches").innerHTML = b.length
-      ? '<div class="sectlabel">Loaded batches</div>'+b.map(x=>`<div class="row"><span class="k mono">${esc(x.batch||"—")}</span><span class="v">${x.skus} SKUs · ${x.boxes} boxes<span class="muted" style="margin-left:6px">${fmt(x.updated_at)}</span></span></div>`).join("")
+      ? '<div class="sectlabel">Uploaded packing lists</div>'+b.map(x=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)">
+          <div style="flex:1;min-width:0">
+            <div class="mono" style="font-weight:700">${esc(x.batch||"—")}</div>
+            <div style="font-size:13px">${x.skus} SKUs · ${x.boxes} cartons · ${x.units||0} units</div>
+            <div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.source_file||"")} · ${fmt(x.updated_at)}</div>
+          </div>
+          <button class="btn sec" style="padding:8px 12px;color:var(--bad);white-space:nowrap" onclick="deleteBatch(${JSON.stringify(esc(x.batch||""))})">🗑 Delete</button>
+        </div>`).join("")
       : '<div class="note">Nothing uploaded yet.</div>';
   }catch(e){}
   try{
     const l=(await api("/api/overstock/log")).log||[];
     if(l.length) $("osbatches").innerHTML += '<div class="sectlabel">Recent changes</div>'+
-      l.slice(0,10).map(x=>`<div class="h"><span>${x.scope==="box"?`Box <span class="mono">${esc(x.from_box||"")}</span>`:`<span class="mono">${esc(x.sku||"")}</span>`} <span class="arrow">→</span> <span class="mono">${esc(x.to_box||"removed")}</span></span><span class="muted">${esc(x.user_name||"")} · ${fmt(x.ts)}</span></div>`).join("");
+      l.slice(0,10).map(x=>`<div class="h"><span>${x.scope==="box"?`Box <span class="mono">${esc(x.from_box||"")}</span>`:`<span class="mono">${esc(x.sku||"")}</span>`} <span class="arrow">→</span> <span class="mono">${esc(x.to_box||"removed")}</span></span><span class="muted" style="margin-left:8px;white-space:nowrap">${esc(x.user_name||"")} · ${fmt(x.ts)}</span></div>`).join("");
   }catch(e){}
 }
 function osRows(items){
   if(!items.length) return '<div class="card center muted">Nothing found.</div>';
-  return '<div class="card"><table><thead><tr><th>Item</th><th>Box</th></tr></thead><tbody>'+
-    items.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
+  return '<div class="card"><table><thead><tr><th>Item</th><th>Cartons</th></tr></thead><tbody>'+
+    items.map(it=>{
+      const boxes = it.manual_box || it.boxes || "";
+      return `<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
       <td><div>${esc(it.title||"")}${it.variant?` <span class="muted">· ${esc(it.variant)}</span>`:""}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div></td>
-      <td style="white-space:nowrap"><span class="mono"><b>${esc(it.box)}</b></span></td></tr>`).join("")+
+      <td style="white-space:nowrap"><span class="mono"><b>${esc(boxes||"—")}</b></span>${it.manual_box?' <span class="muted">manual</span>':""}</td></tr>`;
+    }).join("")+
     '</tbody></table></div>';
 }
 async function osSearch(){
@@ -1190,11 +1205,36 @@ function moveBox(from){
 }
 async function showOverstockBox(box){
   showTab("overstock"); $("osq").value=box;
-  $("osres").innerHTML='<div class="card center muted">Opening box '+esc(box)+'…</div>';
-  try{ const d=await api("/api/overstock/box/"+encodeURIComponent(box));
-    $("osres").innerHTML='<div class="sectlabel">Box '+esc(box)+' — '+d.count+' SKU'+(d.count===1?"":"s")+'</div>'+osRows(d.items||[])+
-      (d.count?'<div class="card"><button class="btn sec wide" onclick="moveBox('+JSON.stringify(box)+')">📦 Move this whole box to another number</button><div class="note">Re-labels every SKU in the carton at once.</div></div>':"");
-  }catch(e){ $("osres").innerHTML='<div class="card center muted">Couldn\'t open that box.</div>'; }
+  $("osres").innerHTML='<div class="card center muted">Opening carton '+esc(box)+'…</div>';
+  try{
+    const d=await api("/api/overstock/box/"+encodeURIComponent(box));
+    const lines=(d.lines||[]);
+    const body = lines.length
+      ? '<div class="card"><table><thead><tr><th>Contents</th><th class="n">Units</th></tr></thead><tbody>'+
+        lines.map(l=>`<tr><td><div>${esc(l.title||l.style||l.item_code)}</div><div class="muted" style="font-size:12px">${esc(l.color||"")}${l.sizes?` · ${esc(l.sizes)}`:""}</div><div class="muted mono" style="font-size:11px">${esc(l.item_code)}</div></td><td class="n"><b>${l.qty==null?"—":l.qty}</b></td></tr>`).join("")+
+        '</tbody></table></div>'
+      : '<div class="card center muted">Nothing recorded in this carton.</div>';
+    const man = (d.manual||[]).length
+      ? '<div class="card"><div class="sectlabel" style="margin-top:0">Set by hand</div>'+d.manual.map(m=>`<div class="row"><span class="k mono">${esc(m.sku)}</span><span class="v">manual</span></div>`).join("")+'</div>' : "";
+    $("osres").innerHTML='<div class="sectlabel">Carton '+esc(box)+' — '+d.count+' line'+(d.count===1?"":"s")+' · '+(d.units||0)+' units</div>'+body+man+
+      '<div class="card"><button class="btn sec wide" onclick="moveBox('+JSON.stringify(box)+')">📦 Move this whole carton to another number</button><div class="note">Re-labels everything in the carton at once.</div></div>';
+  }catch(e){ $("osres").innerHTML='<div class="card center muted">Couldn\'t open that carton.</div>'; }
+}
+function deleteBatch(batch){
+  osEditOpen({
+    title:`Delete ${batch}?`,
+    note:`Removes every carton and SKU from this upload. Boxes you set by hand are kept. Type <b>${esc(batch)}</b> to confirm.`,
+    value:"", placeholder:batch,
+    onSave:async(v)=>{
+      if(String(v).trim().toLowerCase()!==String(batch).toLowerCase()){ toast("Name didn't match — nothing deleted",true); return; }
+      try{
+        const r=await api("/api/overstock/batch/"+encodeURIComponent(batch),{method:"DELETE"});
+        if(r.error){ toast(r.error,true); return; }
+        toast(`Deleted ${batch} — ${r.cartons} cartons, ${r.skus} SKUs`);
+        $("osres").innerHTML=""; $("osq").value=""; osBatches();
+      }catch(e){ toast("Delete failed",true); }
+    },
+  });
 }
 async function osUpload(){
   const f=$("osfile").files[0];
@@ -1218,21 +1258,27 @@ async function syncInventory(){
 
 /* ---------- out of stock → draft customer email ---------- */
 function money(n){ return "$"+(Math.round((Number(n)||0)*100)/100).toFixed(2); }
-async function openOos(order, sku){
+let OOS_SEL=[];
+async function openOos(order, sku, keepSel){
   const m=$("oosModal"), box=$("oosBox");
+  if(!keepSel) OOS_SEL=[String(sku)];
   box.innerHTML='<div class="center muted" style="padding:34px">Preparing the draft…</div>'; m.classList.add("show");
-  let d; try{ d=await api(`/api/oos/preview?order=${encodeURIComponent(order)}&sku=${encodeURIComponent(sku)}`); }
+  let d; try{ d=await api(`/api/oos/preview?order=${encodeURIComponent(order)}&skus=${encodeURIComponent(OOS_SEL.join(","))}`); }
   catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t build the draft.<br><button class="btn sec" style="margin-top:12px" onclick="closeOos()">Close</button></div>'; return; }
   if(!d || !d.found){ box.innerHTML=`<div style="padding:8px"><h3>Can't draft this</h3><p class="muted">${d&&d.no_item?"That item isn't on the order.":"Order not found."}</p><button class="btn sec wide" onclick="closeOos()">Close</button></div>`; return; }
+  const all=d.all_items||d.items;
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-      <h3 style="flex:1">⚠️ Out of stock — draft email</h3>
+      <h3 style="flex:1">⚠️ Out of stock — email the customer</h3>
       <button class="btn sec" onclick="closeOos()" style="padding:6px 12px">✕</button>
     </div>
     <div class="sub" style="margin-bottom:10px">Order <b>${esc(d.order_number)}</b> · ${esc(d.brand||"")} · to ${esc(d.customer_name||"customer")}${d.customer_email?` &lt;${esc(d.customer_email)}&gt;`:""}</div>
+    <div class="sectlabel" style="margin-top:0">Which items are out of stock? (one email covers all of them)</div>
+    <div class="card" style="margin:0 0 10px;padding:4px 12px">
+      ${all.map(it=>`<label class="row" style="cursor:pointer;gap:10px"><input type="checkbox" ${OOS_SEL.includes(String(it.sku))?"checked":""} onchange="oosToggle('${esc(order)}','${esc(it.sku)}',this.checked)" style="width:20px;height:20px"><span class="v" style="flex:1;text-align:left;max-width:none">${esc(it.name)}<div class="muted mono" style="font-size:12px">${esc(it.sku)} · qty ${it.qty}${it.on_hand!=null?` · on hand ${it.on_hand}`:""}</div></span></label>`).join("")}
+    </div>
     <div class="card" style="margin:0 0 10px;padding:6px 12px">
-      <div class="row"><span class="k">Item</span><span class="v" style="max-width:70%">${esc(d.item.name)}</span></div>
-      <div class="row"><span class="k">Item value</span><span class="v">${money(d.item_value)}</span></div>
+      <div class="row"><span class="k">${d.items.length===1?"Item value":d.items.length+" items"}</span><span class="v">${money(d.item_value)}</span></div>
       <div class="row"><span class="k">Store credit (+15%)</span><span class="v" style="color:var(--accent)">${money(d.credit_value)}</span></div>
     </div>
     <div class="sectlabel" style="margin-top:0">Subject</div>
@@ -1241,19 +1287,20 @@ async function openOos(order, sku){
     <textarea id="oosText" spellcheck="true">${esc(d.text)}</textarea>
     <div class="moverow" style="margin-top:12px">
       <button class="btn sec" onclick="closeOos()">Cancel</button>
-      <button class="btn" style="flex:1" onclick="sendOos('${esc(order)}','${esc(d.item.sku)}')">Send to Jose for approval →</button>
+      <button class="btn" style="flex:1" onclick="sendOos('${esc(order)}')">Send to customer →</button>
     </div>
-    <div class="note">Posts to #cs-approvals — nothing goes to the customer until someone taps Apply there.</div>`;
+    <div class="note">Goes out automatically within a minute from the ${esc(d.brand||"brand")} mailbox — no approval step. The Helpdesk opens a ticket for the reply and follows up by itself after 48 hours of silence.</div>`;
 }
+function oosToggle(order,sku,on){ sku=String(sku); if(on){ if(!OOS_SEL.includes(sku)) OOS_SEL.push(sku); } else { OOS_SEL=OOS_SEL.filter(x=>x!==sku); if(!OOS_SEL.length){ toast("Keep at least one item ticked",true); OOS_SEL=[sku]; } } openOos(order,sku,true); }
 function closeOos(){ $("oosModal").classList.remove("show"); }
-async function sendOos(order, sku){
+async function sendOos(order){
   const text=$("oosText")?$("oosText").value:"";
   const subject=$("oosSubject")?$("oosSubject").value:"";
   const btns=$("oosBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
   try{
-    const r=await api("/api/oos/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,order,sku,subject,text})});
+    const r=await api("/api/oos/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,order,skus:OOS_SEL,subject,text})});
     if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
-    closeOos(); toast(`Sent to Jose for approval · case #${r.case_id}`);
+    closeOos(); toast(`Email queued — sends automatically · ${r.items} item${r.items===1?"":"s"} · case #${r.case_id}`);
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
 
