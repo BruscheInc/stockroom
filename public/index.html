@@ -506,27 +506,46 @@ let lastCode=null;
 /* ---------- back navigation ----------
    Opening an item from a list (search results, pick list, bin, activity, overstock…) remembers where you
    were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
-let NAV=[], LAST_ITEM_SKU=null;
+let NAV=[], FWD=[], LAST_ITEM_SKU=null;
+try{ history.scrollRestoration="manual"; }catch(_){}
 const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",search:"search results"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
-function navReset(){ NAV=[]; }
-function navPush(){
+function navReset(){ NAV=[]; FWD=[]; }
+// A snapshot of what's on screen, so it can be put back exactly (back AND forward).
+function snapView(){
   const t=visibleTab(); const e={tab:t,y:window.scrollY};
-  if(t==="scan"){ const html=$("result").innerHTML; if(!html.trim()) return; e.html=html; e.view=currentView; e.code=lastCode; e.label=currentView&&currentView.kind==="bin"?"bin "+currentView.key:(LAST_ITEM_SKU||"previous item"); }
-  else e.label=TAB_NAMES[t];
+  if(t==="scan"){
+    const tmp=document.createElement("div"); tmp.innerHTML=$("result").innerHTML;
+    tmp.querySelectorAll(".backbar").forEach(b=>b.remove());          // the back button is re-added on restore
+    e.html=tmp.innerHTML; e.view=currentView; e.code=lastCode; e.sku=LAST_ITEM_SKU;
+    e.label=currentView&&currentView.kind==="bin"?"bin "+currentView.key:(LAST_ITEM_SKU||"previous item");
+  } else e.label=TAB_NAMES[t];
+  return e;
+}
+function showView(e){
+  if(e.tab==="scan"){
+    showTab("scan"); $("result").innerHTML=e.html||""; currentView=e.view; lastCode=e.code; LAST_ITEM_SKU=e.sku||null;
+    if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar());
+  } else showTab(e.tab);
+  setTimeout(()=>window.scrollTo(0,e.y||0),40);
+}
+function navPush(){
+  const e=snapView(); if(e.tab==="scan" && !e.html.trim()) return;
   NAV.push(e); if(NAV.length>25) NAV.shift();
+  FWD=[];                                                            // a new step drops the old forward trail
   try{ history.pushState({sr:NAV.length},""); }catch(_){}
 }
-function goBack(){
-  const e=NAV.pop(); if(!e) return;
-  if(e.tab==="scan"){ showTab("scan"); $("result").innerHTML=e.html; currentView=e.view; lastCode=e.code; }
-  else showTab(e.tab);
-  setTimeout(()=>window.scrollTo(0,e.y),40);
-}
+function goBack(){ const e=NAV.pop(); if(!e) return; FWD.push(snapView()); showView(e); }
+function goForward(){ const e=FWD.pop(); if(!e) return; NAV.push(snapView()); showView(e); }
 function backPressed(){ if(history.state&&history.state.sr){ history.back(); } else goBack(); }
-window.addEventListener("popstate",()=>{ if(NAV.length) goBack(); });
+// Phone back/forward gestures: the history entry's depth says which way we went.
+window.addEventListener("popstate",(ev)=>{
+  const depth=(ev.state&&ev.state.sr)||0;
+  while(depth<NAV.length && NAV.length) goBack();
+  while(depth>NAV.length && FWD.length) goForward();
+});
 function backBar(){ const e=NAV[NAV.length-1]; if(!e) return "";
-  return `<button class="btn sec wide" style="margin-bottom:12px;padding:12px;text-align:left" onclick="backPressed()">‹ Back to ${esc(e.label)}</button>`; }
+  return `<button class="btn sec wide backbar" style="margin-bottom:12px;padding:12px;text-align:left" onclick="backPressed()">‹ Back to ${esc(e.label)}</button>`; }
 
 async function lookup(code, opts){
   opts=opts||{};
