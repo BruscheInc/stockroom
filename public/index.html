@@ -341,10 +341,10 @@
 </div>
 
 <nav class="tabs">
-  <button id="nav-scan" class="on" onclick="showTab('scan')"><span class="i">🔍</span>Scan</button>
-  <button id="nav-order" onclick="showTab('order')"><span class="i">🧾</span>Pick List</button>
-  <button id="nav-bins" onclick="showTab('bins')"><span class="i">🗄️</span>Bins</button>
-  <button id="nav-search" onclick="showTab('search')"><span class="i">📋</span>Items</button>
+  <button id="nav-scan" class="on" onclick="navReset();showTab('scan')"><span class="i">🔍</span>Scan</button>
+  <button id="nav-order" onclick="navReset();showTab('order')"><span class="i">🧾</span>Pick List</button>
+  <button id="nav-bins" onclick="navReset();showTab('bins')"><span class="i">🗄️</span>Bins</button>
+  <button id="nav-search" onclick="navReset();showTab('search')"><span class="i">📋</span>Items</button>
 </nav>
 </div>
 
@@ -437,7 +437,7 @@ function showTab(t){
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
 function closeMenu(){ $("drawer").classList.remove("show"); }
-function menuGo(t){ closeMenu(); showTab(t); }
+function menuGo(t){ closeMenu(); navReset(); showTab(t); }
 
 /* ---------- scanner arming ----------
    A Bluetooth/USB scanner (e.g. Tera) is a keyboard. On iOS it only feeds a FOCUSED field, and iOS
@@ -457,7 +457,7 @@ async function submitScan(){ const s=$("scan"); const code=s.value.trim(); s.val
   if(!code) return;
   // Multi-word text isn't a barcode/SKU — treat it as a name search.
   if(/\s/.test(code)){ showTab("search"); $("q").value=code; doFind(); return; }
-  await lookup(code); }
+  await lookup(code,{scan:true}); }
 
 /* ---------- global scanner capture ----------
    Backup for when focus has drifted (e.g. after tapping a button in a result): a hardware scanner's
@@ -475,7 +475,7 @@ document.addEventListener("keydown",(e)=>{
 });
 function onWedgeScan(code){
   if($("tab-order") && !$("tab-order").classList.contains("hidden")){ $("orderScan").value=code; loadOrder(code); }
-  else { showTab("scan"); lookup(code); }
+  else { showTab("scan"); lookup(code,{scan:true}); }
 }
 
 /* ---------- camera scanning ---------- */
@@ -495,7 +495,7 @@ async function startCamera(onDetect, opts){
     camOn=true;
   }catch(e){ const n=$(opts.note||"scanNote"); if(n) n.textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
 }
-function toggleCamera(){ if(camOn){ stopCamera(); return; } startCamera(lookup); }
+function toggleCamera(){ if(camOn){ stopCamera(); return; } startCamera((c)=>lookup(c,{scan:true})); }
 function toggleOrderCamera(){ if(camOn){ stopCamera(); return; } startCamera(loadOrder,{reader:"oreader",btn:"ocamBtn",startText:"📷 Scan packing-slip barcode",stopText:"✕ Stop camera",note:"orderNote"}); }
 function scanIntoBin(bin){ startCamera((code)=>addToBinCode(bin, code)); }
 function stopCamera(){ if($(camBtnId)) $(camBtnId).textContent=camStartText; if($(camReader)) $(camReader).style.display="none";
@@ -503,7 +503,39 @@ function stopCamera(){ if($(camBtnId)) $(camBtnId).textContent=camStartText; if(
 
 /* ---------- lookup / render ---------- */
 let lastCode=null;
-async function lookup(code){
+/* ---------- back navigation ----------
+   Opening an item from a list (search results, pick list, bin, activity, overstock…) remembers where you
+   were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
+let NAV=[], LAST_ITEM_SKU=null;
+const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",search:"search results"};
+function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
+function navReset(){ NAV=[]; }
+function navPush(){
+  const t=visibleTab(); const e={tab:t,y:window.scrollY};
+  if(t==="scan"){ const html=$("result").innerHTML; if(!html.trim()) return; e.html=html; e.view=currentView; e.code=lastCode; e.label=currentView&&currentView.kind==="bin"?"bin "+currentView.key:(LAST_ITEM_SKU||"previous item"); }
+  else e.label=TAB_NAMES[t];
+  NAV.push(e); if(NAV.length>25) NAV.shift();
+  try{ history.pushState({sr:NAV.length},""); }catch(_){}
+}
+function goBack(){
+  const e=NAV.pop(); if(!e) return;
+  if(e.tab==="scan"){ showTab("scan"); $("result").innerHTML=e.html; currentView=e.view; lastCode=e.code; }
+  else showTab(e.tab);
+  setTimeout(()=>window.scrollTo(0,e.y),40);
+}
+function backPressed(){ if(history.state&&history.state.sr){ history.back(); } else goBack(); }
+window.addEventListener("popstate",()=>{ if(NAV.length) goBack(); });
+function backBar(){ const e=NAV[NAV.length-1]; if(!e) return "";
+  return `<button class="btn sec wide" style="margin-bottom:12px;padding:12px;text-align:left" onclick="backPressed()">‹ Back to ${esc(e.label)}</button>`; }
+
+async function lookup(code, opts){
+  opts=opts||{};
+  if(opts.scan) navReset();
+  else {
+    // Re-loading the item already on screen (after a save / refresh) isn't a new step.
+    const same = visibleTab()==="scan" && (code===lastCode || (LAST_ITEM_SKU && code===LAST_ITEM_SKU) || (currentView&&currentView.kind==="bin"&&String(code).replace(/^BIN[-:]/i,"")===currentView.key));
+    if(!same){ navPush(); window.scrollTo(0,0); }
+  }
   lastCode=code;
   $("result").innerHTML='<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
   showTab("scan");
@@ -513,6 +545,8 @@ async function lookup(code){
   else if(d.type==="order") renderOrder(d, $("result"));
   else if(d.type==="unknown") renderUnknown(d);
   else $("result").innerHTML='<div class="card center muted">Nothing scanned.</div>';
+  LAST_ITEM_SKU = d.type==="item" ? d.sku : null;
+  if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar());
   setTimeout(armScanner,0); // re-arm for the next scan (no tap needed)
 }
 function storesRows(stores){
@@ -630,7 +664,7 @@ function renderBin(d){
       <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
-function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error) renderBin(d); }).catch(()=>{}); }
+function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error){ renderBin(d); if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar()); } }).catch(()=>{}); }
 // ---- item view: assign / remove bins (max 3 per SKU) ----
 async function removeFromItem(sku, bin){
   try{ const r=await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku,removeBin:bin})});
@@ -714,7 +748,7 @@ function refreshNow(){
   if(!$("tab-bins").classList.contains("hidden")){ loadBins(); }
   else if(!$("tab-search").classList.contains("hidden")){ doFind(); }
   else if(!$("tab-activity").classList.contains("hidden")){ loadActivity(); }
-  else if(currentView && currentView.kind==="bin"){ api("/api/bin/"+encodeURIComponent(currentView.key)).then(d=>{ if(d && !d.error) renderBin(d); }).catch(()=>{}); }
+  else if(currentView && currentView.kind==="bin"){ reloadBin(currentView.key); }
   else if(lastCode){ lookup(lastCode); }
   toast("Refreshed");
 }
