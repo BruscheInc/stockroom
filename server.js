@@ -204,6 +204,25 @@ async function migrate() {
     ts TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_overstocklog_sku ON overstock_log(sku, ts DESC)`);
+  // Quantity activity: every time a SKU's on-hand goes down or up, why, who and when.
+  // Sources: ShipStation shipments (an order shipped), manual adjustments, stock-verification corrections.
+  // `ref` de-duplicates entries pulled from outside (one row per shipment + SKU).
+  await db(`CREATE TABLE IF NOT EXISTS stock_activity (
+    id BIGSERIAL PRIMARY KEY,
+    sku TEXT NOT NULL,
+    title TEXT,
+    change INTEGER NOT NULL,
+    qty_before INTEGER,
+    qty_after INTEGER,
+    reason TEXT,
+    detail TEXT,
+    ref TEXT,
+    user_name TEXT,
+    ts TIMESTAMPTZ DEFAULT now()
+  )`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_act_sku ON stock_activity(sku, ts DESC)`);
+  await db(`CREATE INDEX IF NOT EXISTS idx_act_ts ON stock_activity(ts DESC)`);
+  await db(`CREATE UNIQUE INDEX IF NOT EXISTS idx_act_ref ON stock_activity(ref) WHERE ref IS NOT NULL`);
 }
 
 /* --------------------------------------- Shopify (multi-store) --------------------------------------- */
@@ -355,25 +374,120 @@ async function itemLevel(st, invItemId) {
   } catch (e) { /* fall through to the store default */ }
   return { locId: await storeLocationId(st), onHand: 0 };
 }
-// Set Shopify on-hand to a counted quantity for a SKU, across every store that carries it.
-async function shopifySetOnHand(sku, qty) {
-  const rows = (await db(`SELECT brand, inv_item_id, on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+// Make sure stock_items has a row (with the Shopify inventory item id) for every store that carries a SKU.
+// New products that haven't been through the 12-hour snapshot yet get looked up live and added.
+async function ensureStockItem(sku) {
+  const read = () => db(`SELECT sku,brand,title,variant,inv_item_id,on_hand,status FROM stock_items WHERE sku=$1`, [sku]).then((r) => r.rows);
+  let rows = await read();
+  if (rows.length && rows.every((r) => r.inv_item_id)) return rows;
+  await Promise.all(STORES.map(async (st) => {
+    try {
+      const d = await storeGraphQL(st, VARIANT_QUERY, { q: `sku:${JSON.stringify(sku)}` });
+      for (const e of (d.productVariants?.edges || [])) {
+        const n = e.node;
+        if (String(n.sku || "").toLowerCase() !== String(sku).toLowerCase() || !n.inventoryItem?.id) continue;
+        await db(
+          `INSERT INTO stock_items (sku,brand,title,variant,on_hand,status,inv_item_id,synced_at) VALUES ($1,$2,$3,$4,NULL,$5,$6,now())
+           ON CONFLICT (sku,brand) DO UPDATE SET inv_item_id=EXCLUDED.inv_item_id, title=COALESCE(stock_items.title,EXCLUDED.title), status=EXCLUDED.status`,
+          [n.sku, st.brand, n.product?.title || n.displayName, n.displayName, n.product?.status || null, n.inventoryItem.id]);
+      }
+    } catch (e) { /* a store that errors just doesn't get a row */ }
+  }));
+  return read();
+}
+// Live on-hand per store for a SKU (same location the set call writes to). null = couldn't read it.
+async function liveOnHand(sku) {
+  const rows = await ensureStockItem(sku);
   const out = [];
+  for (const r of rows) {
+    const st = STORES.find((s) => s.brand === r.brand);
+    let onHand = null;
+    if (st && r.inv_item_id) {
+      try {
+        const d = await storeGraphQL(st, `query($id:ID!){inventoryItem(id:$id){inventoryLevels(first:5){edges{node{quantities(names:["on_hand"]){name quantity}}}}}}`, { id: r.inv_item_id });
+        const n = d.inventoryItem?.inventoryLevels?.edges?.[0]?.node;
+        const q = n && (n.quantities || []).find((x) => x.name === "on_hand");
+        if (q && q.quantity != null) { onHand = Number(q.quantity); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [onHand, sku, r.brand]); }
+      } catch (e) { /* leave null */ }
+    }
+    out.push({ brand: r.brand, title: r.title, status: r.status, on_hand: onHand, cached_on_hand: r.on_hand });
+  }
+  return out;
+}
+// Reasons staff pick when adjusting → the matching Shopify inventory reason code.
+const ADJUST_REASONS = {
+  "Damaged": "damaged",
+  "Lost / missing": "shrinkage",
+  "Found extra": "correction",
+  "Customer return": "restock",
+  "Received": "received",
+  "Count correction": "correction",
+  "Other": "other",
+};
+// Set Shopify on-hand to a quantity for a SKU, across every store that carries it.
+// meta = { reason, detail, user, shopReason, uri } — when reason is given, the change is written to the activity log.
+async function shopifySetOnHand(sku, qty, meta) {
+  meta = meta || {};
+  const rows = (await db(`SELECT brand, title, inv_item_id, on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+  const out = [];
+  const setOne = async (st, invItemId, lvl, reason) => {
+    const idem = require("crypto").randomUUID();
+    const d = await storeGraphQL(st,
+      `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input) @idempotent(key:"${idem}"){ userErrors{field message} } }`,
+      { input: { reason, referenceDocumentUri: meta.uri || "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: invItemId, locationId: lvl.locId, quantity: Number(qty), changeFromQuantity: lvl.onHand }] } });
+    return d.inventorySetOnHandQuantities?.userErrors || [];
+  };
   for (const r of rows) {
     const st = STORES.find((s) => s.brand === r.brand);
     if (!st || !r.inv_item_id) { out.push({ brand: r.brand, ok: false, error: "no Shopify inventory item on file" }); continue; }
     try {
       const lvl = await itemLevel(st, r.inv_item_id);
       if (!lvl.locId) { out.push({ brand: r.brand, ok: false, error: "no fulfillment location" }); continue; }
-      const idem = require("crypto").randomUUID();
-      const d = await storeGraphQL(st,
-        `mutation($input:InventorySetOnHandQuantitiesInput!){ inventorySetOnHandQuantities(input:$input) @idempotent(key:"${idem}"){ userErrors{field message} } }`,
-        { input: { reason: "correction", referenceDocumentUri: "logistics://stockroom/verification", setQuantities: [{ inventoryItemId: r.inv_item_id, locationId: lvl.locId, quantity: Number(qty), changeFromQuantity: lvl.onHand }] } });
-      const ue = d.inventorySetOnHandQuantities?.userErrors || [];
+      const reason = meta.shopReason || "correction";
+      let ue = await setOne(st, r.inv_item_id, lvl, reason);
+      // If Shopify rejects the specific reason code, fall back to a plain correction rather than failing the save.
+      if (ue.length && reason !== "correction" && ue.some((x) => /reason/i.test(`${x.field} ${x.message}`))) ue = await setOne(st, r.inv_item_id, lvl, "correction");
       if (ue.length) { out.push({ brand: r.brand, ok: false, error: ue.map((x) => x.message).join("; ") }); }
       else { out.push({ brand: r.brand, ok: true, from: lvl.onHand, to: Number(qty) }); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [Number(qty), sku, r.brand]); }
     } catch (e) { out.push({ brand: r.brand, ok: false, error: e.message }); }
   }
+  const ok = out.filter((o) => o.ok);
+  if (meta.reason && ok.length) {
+    const from = Math.max(...ok.map((o) => Number(o.from) || 0));
+    if (from !== Number(qty)) {
+      await logActivity({ sku, title: rows.find((r) => r.title)?.title || null, change: Number(qty) - from, before: from, after: Number(qty),
+        reason: meta.reason, detail: meta.detail || null, user: meta.user || null });
+    }
+  }
+  return out;
+}
+
+/* --------------------------------------- Quantity activity log --------------------------------------- */
+// Returns true when a row was written (false when `ref` says we already have it).
+async function logActivity({ sku, title, change, before, after, reason, detail, ref, user, ts }) {
+  if (!sku || !Number(change)) return false;
+  const r = await db(
+    `INSERT INTO stock_activity (sku,title,change,qty_before,qty_after,reason,detail,ref,user_name,ts)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::timestamptz,now()))
+     ON CONFLICT (ref) WHERE ref IS NOT NULL DO NOTHING RETURNING id`,
+    [sku, title || null, Number(change), before ?? null, after ?? null, reason || null, detail || null, ref || null, user || null, ts ? new Date(ts).toISOString() : null]);
+  return r.rowCount > 0;
+}
+async function getActivity(sku, limit = 30) {
+  const r = await db(`SELECT id,change,qty_before,qty_after,reason,detail,user_name,ts FROM stock_activity WHERE sku=$1 ORDER BY ts DESC, id DESC LIMIT $2`, [sku, limit]);
+  return r.rows;
+}
+// Last stock verification for one SKU, and for a batch of SKUs (used wherever a product is listed).
+async function lastVerification(sku) {
+  const r = await db(`SELECT counted_qty,system_qty,matched,corrected,verified_by,verified_at FROM stock_verifications WHERE sku=$1`, [sku]);
+  return r.rows[0] || null;
+}
+async function verificationMap(skus) {
+  const out = {};
+  const list = [...new Set((skus || []).filter(Boolean))];
+  if (!list.length) return out;
+  const r = await db(`SELECT sku,verified_at,verified_by FROM stock_verifications WHERE sku = ANY($1)`, [list]);
+  for (const row of r.rows) out[row.sku] = row;
   return out;
 }
 
@@ -406,6 +520,67 @@ async function ssSetWarehouseLocation(sku, location) {
   full.warehouseLocation = location || "";
   await ssReq("PUT", `/products/${p.productId}`, full);
   return { productId: p.productId, warehouseLocation: location || "" };
+}
+
+/* --------------------------------------- Shipments → activity log --------------------------------------- */
+// Every shipped label pulls pieces off the shelf. Each ShipStation shipment becomes one "Shipped" row per SKU
+// (−qty, order number, tracking). A voided label we already logged gets a matching "Label voided" (+qty) row.
+// ShipStation V1 dates have no time zone and are US Pacific.
+const SS_TZ = "America/Los_Angeles";
+function tzOffsetMin(date, tz) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(date);
+  const g = (t) => Number(parts.find((p) => p.type === t).value);
+  return (Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"), g("second")) - Math.floor(date.getTime() / 1000) * 1000) / 60000;
+}
+function ssToDate(s) {
+  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const naive = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return new Date(naive - tzOffsetMin(new Date(naive), SS_TZ) * 60000);
+}
+function ssFmt(date) { return new Date(date.getTime() + tzOffsetMin(date, SS_TZ) * 60000).toISOString().slice(0, 19).replace("T", " "); }
+
+async function logShipment(s) {
+  const bySku = {};
+  for (const it of (s.shipmentItems || [])) {
+    if (!it || !it.sku) continue;
+    const q = Number(it.quantity) || 0; if (!q) continue;
+    (bySku[it.sku] = bySku[it.sku] || { qty: 0, name: it.name || null }).qty += q;
+  }
+  let n = 0;
+  for (const [sku, v] of Object.entries(bySku)) {
+    const shipRef = `ss-ship:${s.shipmentId}:${sku}`;
+    if (s.voided) {
+      // Only reverse a shipment we actually logged — a label voided before we ever saw it never left the shelf.
+      const had = await db(`SELECT 1 FROM stock_activity WHERE ref=$1`, [shipRef]);
+      if (had.rows.length && await logActivity({ sku, title: v.name, change: v.qty, reason: "Label voided", detail: `Order ${s.orderNumber} — shipment voided`, ref: `ss-void:${s.shipmentId}:${sku}`, user: "ShipStation", ts: ssToDate(s.voidDate) || new Date() })) n++;
+      continue;
+    }
+    if (await logActivity({ sku, title: v.name, change: -v.qty, reason: "Shipped", detail: `Order ${s.orderNumber}${s.trackingNumber ? ` · ${s.trackingNumber}` : ""}`, ref: shipRef, user: "ShipStation", ts: ssToDate(s.createDate) || new Date() })) n++;
+  }
+  return n;
+}
+let shipPoll = { running: false, at: null, logged: 0, error: null };
+async function pollShipments(days) {
+  if (!ssConfigured() || shipPoll.running) return shipPoll;
+  shipPoll = { ...shipPoll, running: true };
+  let logged = 0;
+  try {
+    const start = ssFmt(new Date(Date.now() - days * 864e5));
+    let page = 1, pages = 1;
+    do {
+      const j = await ssReq("GET", `/shipments?createDateStart=${encodeURIComponent(start)}&includeShipmentItems=true&sortBy=CreateDate&sortDir=ASC&pageSize=500&page=${page}`);
+      pages = j.pages || 1;
+      for (const s of (j.shipments || [])) logged += await logShipment(s);
+      page++;
+      if (page <= pages) await new Promise((r) => setTimeout(r, 1600)); // ShipStation: 40 requests/min
+    } while (page <= pages);
+    shipPoll = { running: false, at: new Date().toISOString(), logged, error: null };
+  } catch (e) {
+    shipPoll = { running: false, at: new Date().toISOString(), logged, error: e.message };
+    console.error("🚚 shipment pull failed:", e.message);
+  }
+  return shipPoll;
 }
 
 /* --------------------------------------- Data operations --------------------------------------- */
@@ -465,8 +640,9 @@ async function registerBinTokens(loc) {
 // Items in a bin = any item whose location contains that bin as one of its comma-separated tokens.
 async function binItems(code) {
   const r = await db(
-    `SELECT sku,bin,title,barcode,updated_at,updated_by FROM item_location
-     WHERE lower($1) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(bin, ',')) x) ORDER BY sku`,
+    `SELECT il.sku,il.bin,il.title,il.barcode,il.updated_at,il.updated_by,sv.verified_at,sv.verified_by
+       FROM item_location il LEFT JOIN stock_verifications sv ON sv.sku = il.sku
+     WHERE lower($1) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(il.bin, ',')) x) ORDER BY il.sku`,
     [code]
   );
   return r.rows;
@@ -562,6 +738,7 @@ async function buildPickList(rawCode) {
   const skus = Object.keys(bySku);
   const binBySku = {};
   if (skus.length) { const b = await db(`SELECT sku,bin FROM item_location WHERE sku = ANY($1)`, [skus]); for (const r of b.rows) binBySku[r.sku] = r.bin; }
+  const verBySku = await verificationMap(skus);
   const items = await Promise.all(skus.map(async (sku) => {
     const base = bySku[sku];
     let bin = binBySku[sku] || base.ss_loc || null;
@@ -571,7 +748,9 @@ async function buildPickList(rawCode) {
       const f = (await shopifyFind({ sku })).filter((m) => !m.error);
       if (f.length) { on_hand = f.reduce((s, m) => s + (Number(m.qty) || 0), 0); title = f[0].title || title; image = f.find((m) => m.image)?.image || image; status = f[0].status || null; }
     } catch {}
-    return { sku, name: title, qty: base.qty, unit_price: base.unit_price, bin, on_hand, image, status };
+    const ver = verBySku[sku];
+    return { sku, name: title, qty: base.qty, unit_price: base.unit_price, bin, on_hand, image, status,
+      verified_at: ver ? ver.verified_at : null, verified_by: ver ? ver.verified_by : null };
   }));
   // Sort by bin (natural), items without a bin go last so the picker walks a route.
   items.sort((a, b) => {
@@ -675,6 +854,8 @@ async function resolveCode(raw) {
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       overstock: await overstockFor(sku),
       history: await getHistory(sku, 15),
+      verification: await lastVerification(sku),
+      activity: await getActivity(sku, 20),
     };
   }
   // 3) maybe an order / packing-slip barcode. Two shapes: an order number (letters + digits,
@@ -1041,6 +1222,8 @@ app.get("/api/item/:sku", async (req, res) => {
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       overstock: await overstockFor(sku),
       history: await getHistory(sku, 50),
+      verification: await lastVerification(sku),
+      activity: await getActivity(sku, 50),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1135,7 +1318,9 @@ app.get("/api/find", async (req, res) => {
           WHERE s.sku = ANY($1)`, [skus]);
       for (const r of o.rows) osBySku[r.sku] = r.box;
     }
-    rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null, overstock_box: r.sku ? (osBySku[r.sku] || null) : null }));
+    const verBySku = await verificationMap(skus);
+    rows = rows.map((r) => ({ ...r, bin: r.sku ? (binBySku[r.sku] || null) : null, overstock_box: r.sku ? (osBySku[r.sku] || null) : null,
+      verified_at: r.sku && verBySku[r.sku] ? verBySku[r.sku].verified_at : null, verified_by: r.sku && verBySku[r.sku] ? verBySku[r.sku].verified_by : null }));
     rows.sort((a, b) => (a.title || "").localeCompare(b.title || "") || (a.brand || "").localeCompare(b.brand || ""));
     res.json({ items: rows, count: rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1216,13 +1401,19 @@ app.get("/api/stock/item/:sku", async (req, res) => {
 });
 // Record a physical count (who/when) and correct Shopify on-hand to it when it differs.
 // Shared by /api/stock/verify and the low-stock path of /api/stock/putback. Returns the result object.
-async function doVerify(sku, cnt, by, note) {
+// meta (optional) = { reason, detail, shopReason } — overrides how the correction is labelled in the activity log.
+async function doVerify(sku, cnt, by, note, meta) {
   const items = (await db(`SELECT brand,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
   const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
   const matched = system != null && cnt === system;
   let correction = null, correctionNote = null;
   if (system == null || cnt !== system) {
-    correction = await shopifySetOnHand(sku, cnt);
+    correction = await shopifySetOnHand(sku, cnt, {
+      reason: (meta && meta.reason) || "Stock verification",
+      detail: (meta && meta.detail) || `shelf count ${cnt}`,
+      shopReason: (meta && meta.shopReason) || "correction",
+      user: by,
+    });
     const okc = correction.filter((c) => c.ok), bad = correction.filter((c) => !c.ok);
     correctionNote = correction.length ? [okc.length ? `set ${okc.map((c) => c.brand).join(", ")} → ${cnt}` : "", bad.length ? `failed: ${bad.map((c) => `${c.brand} (${c.error})`).join("; ")}` : ""].filter(Boolean).join(" · ") : "no Shopify inventory item on file";
   }
@@ -1295,6 +1486,68 @@ app.post("/api/stock/sync-inventory", async (req, res) => {
 });
 app.get("/api/stock/sync-status", (req, res) => { if (!guard(req, res)) return; res.json(invSync); });
 
+/* ---- Adjust quantity (from the product view) ---- */
+// Live Shopify on-hand + last verification, for the adjust screen.
+app.get("/api/stock/live/:sku", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const sku = req.params.sku;
+    const brands = await liveOnHand(sku);
+    const vals = brands.map((b) => b.on_hand).filter((v) => v != null);
+    res.json({ sku, title: brands.find((b) => b.title)?.title || null, brands, on_hand: vals.length ? Math.max(...vals) : null,
+      verification: await lastVerification(sku), reasons: Object.keys(ADJUST_REASONS) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Set a new on-hand quantity with a reason. counted=true also records it as a stock verification.
+app.post("/api/stock/adjust", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { sku, qty, reason, note, counted } = req.body || {};
+    if (!sku) return res.status(400).json({ error: "sku required" });
+    const target = Number(qty);
+    if (qty === "" || qty == null || !Number.isInteger(target) || target < 0) return res.status(400).json({ error: "quantity must be a whole number, 0 or more" });
+    const why = String(reason || "").trim();
+    if (!why) return res.status(400).json({ error: "pick a reason" });
+    const by = actorOf(req);
+    const rows = await ensureStockItem(sku);
+    if (!rows.length) return res.status(404).json({ error: "this SKU isn't in Shopify" });
+    const detail = String(note || "").trim() || null;
+    const shopReason = ADJUST_REASONS[why] || "correction";
+    if (counted) {
+      const v = await doVerify(sku, target, by, `adjust · ${why}${detail ? " · " + detail : ""}`, { reason: why, detail, shopReason });
+      return res.json({ ok: true, sku, qty: target, verified: true, matched: v.matched, corrected: v.corrected, correction: v.correction, correction_note: v.correction_note });
+    }
+    const results = await shopifySetOnHand(sku, target, { reason: why, detail, shopReason, user: by, uri: "logistics://stockroom/adjustment" });
+    const ok = results.filter((r) => r.ok), bad = results.filter((r) => !r.ok);
+    if (!ok.length) return res.status(502).json({ error: bad.map((b) => `${b.brand}: ${b.error}`).join("; ") || "Shopify wasn't updated" });
+    res.json({ ok: true, sku, qty: target, from: Math.max(...ok.map((r) => Number(r.from) || 0)), results, failed: bad });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ---- Quantity activity log ---- */
+app.get("/api/activity/:sku", async (req, res) => {
+  if (!guard(req, res)) return;
+  try { res.json({ sku: req.params.sku, activity: await getActivity(req.params.sku, 200) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Recent activity across every SKU. ?drops=1 → only quantity drops; ?q= → SKU / name / order contains.
+app.get("/api/activity", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const where = [], p = [];
+    if (req.query.drops === "1") where.push(`a.change < 0`);
+    const q = String(req.query.q || "").trim();
+    if (q) { p.push(`%${q.toLowerCase()}%`); where.push(`(lower(a.sku) LIKE $${p.length} OR lower(coalesce(a.title,'')) LIKE $${p.length} OR lower(coalesce(a.detail,'')) LIKE $${p.length})`); }
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    const r = await db(
+      `SELECT a.id,a.sku,COALESCE(a.title,(SELECT si.title FROM stock_items si WHERE si.sku=a.sku LIMIT 1)) AS title,
+              a.change,a.qty_before,a.qty_after,a.reason,a.detail,a.user_name,a.ts
+         FROM stock_activity a ${where.length ? "WHERE " + where.join(" AND ") : ""}
+        ORDER BY a.ts DESC, a.id DESC LIMIT ${limit}`, p);
+    res.json({ activity: r.rows, shipments: shipPoll });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 const PORT = process.env.PORT || 8080;
 (async () => {
   try { await migrate(); console.log("🗄️  Postgres schema ready"); }
@@ -1320,6 +1573,15 @@ const PORT = process.env.PORT || 8080;
     console.log("📥 syncing bins from ShipStation on boot…");
     runSync("boot");
     setInterval(() => runSync("6h"), 6 * 60 * 60 * 1000);
+    // Shipments → activity log. First run back-fills 14 days; after that every 10 min re-reads the last
+    // 2 days (cheap, de-duplicated) so late voids are caught too.
+    try {
+      const had = (await db(`SELECT 1 FROM stock_activity WHERE ref LIKE 'ss-ship:%' LIMIT 1`)).rows.length;
+      const days = had ? 2 : 14;
+      console.log(`🚚 pulling ShipStation shipments (last ${days} days)…`);
+      pollShipments(days).then((r) => console.log(`🚚 shipments: ${JSON.stringify(r)}`));
+    } catch (e) { console.error("🚚 shipment pull setup failed:", e.message); }
+    setInterval(() => { pollShipments(2).catch(() => {}); }, 10 * 60 * 1000);
   }
   // Stock Verification: seed the Shopify inventory snapshot on first boot (only if empty), refresh every 12h.
   if (STORES.length) {

@@ -155,6 +155,20 @@
   .vbadge.never{background:rgba(255,180,84,.16);color:var(--warn)}
   .vbadge.ok{background:rgba(57,217,138,.16);color:var(--accent)}
   .vbadge.disc{background:rgba(255,107,107,.16);color:#ffb0b0}
+  /* last-verified line + quantity activity + adjust */
+  .verline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin-top:8px}
+  .vtag{font-size:11.5px;font-weight:700;white-space:nowrap}
+  .vtag.ok{color:var(--accent)} .vtag.old{color:var(--warn)} .vtag.never{color:var(--warn)}
+  .act .h{align-items:flex-start}
+  .act .chg{font-weight:800;min-width:36px;display:inline-block;font-variant-numeric:tabular-nums}
+  .act .chg.down{color:var(--bad)} .act .chg.up{color:var(--accent)}
+  .reasons{display:flex;flex-wrap:wrap;gap:6px}
+  .reasons button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:8px 13px;font-size:13px;font-weight:600}
+  .reasons button.on{background:rgba(57,217,138,.16);border-color:var(--accent);color:var(--accent)}
+  .stepper{display:flex;align-items:center;justify-content:center;gap:14px;margin:4px 0}
+  .stepper .btn{font-size:26px;width:58px;height:58px;padding:0}
+  .stepper input{width:120px;font-size:36px;font-weight:800;text-align:center;padding:8px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:12px}
+  .delta{text-align:center;font-weight:700;font-size:14px;min-height:20px}
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -310,6 +324,18 @@
     <div class="sectlabel">Recent put-backs</div>
     <div id="strayList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-activity" class="hidden">
+    <div class="card" style="margin-bottom:10px">
+      <div class="sectlabel" style="margin-top:0">🧮 Quantity activity</div>
+      <div class="note" style="text-align:left;margin:0 0 10px">Every time stock goes down or up: shipped orders (from ShipStation), adjustments, and verification corrections — with who, when and why.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="actq" data-osk="1" inputmode="none" placeholder="SKU, name or order #…" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')loadActivity()" style="flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:10px;font-size:15px">
+        <button class="btn" style="padding:10px 16px" onclick="loadActivity()">Search</button>
+      </div>
+      <label class="vtoggle" style="margin-top:10px"><input type="checkbox" id="actdrops" onchange="loadActivity()"> Drops only</label>
+    </div>
+    <div id="actList" class="card"><div class="muted center">Loading…</div></div>
+  </section>
 </div>
 
 <nav class="tabs">
@@ -325,6 +351,7 @@
 <div class="modal" id="osEditModal"><div class="box" id="osEditBox"></div></div>
 <div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
 <div class="modal" id="putbackModal"><div class="box" id="putbackBox"></div></div>
+<div class="modal" id="adjustModal"><div class="box" id="adjustBox"></div></div>
 <button class="oskfab" id="oskFab" onclick="oskOpen()" title="On-screen keyboard">⌨️</button>
 <div class="osk" id="osk"></div>
 <div class="pop" id="oskPop"></div>
@@ -338,6 +365,7 @@
     <button class="menuitem" data-tab="order" onclick="menuGo('order')"><span class="i">🧾</span> Pick List</button>
     <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><span class="i">📊</span> Stock Verification</button>
     <button class="menuitem" data-tab="strays" onclick="menuGo('strays')"><span class="i">🔄</span> Strays</button>
+    <button class="menuitem" data-tab="activity" onclick="menuGo('activity')"><span class="i">🧮</span> Quantity activity</button>
     <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><span class="i">📦</span> Overstock</button>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
     <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
@@ -394,7 +422,7 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","verify","strays","overstock","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
@@ -402,6 +430,7 @@ function showTab(t){
   if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
   if(t==="verify"){ loadStockSummary(); loadStockList(); }
   if(t==="overstock"){ osBatches(); }
+  if(t==="activity"){ loadActivity(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -493,8 +522,27 @@ function histRows(h){
   return h.map(x=>`<div class="h"><span>${x.from_bin?`<span class="mono">${esc(x.from_bin)}</span>`:'<span class="muted">—</span>'} <span class="arrow">→</span> <span class="mono">${esc(x.to_bin||"—")}</span></span><span class="muted">${esc(x.user_name||"")} · ${fmt(x.ts)}</span></div>`).join("");
 }
 function fmt(ts){ try{ return new Date(ts).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ts; } }
+// Last stock verification, shown wherever a product is listed. Amber when never counted or 30+ days old.
+const VER_STALE_DAYS=30;
+function verTag(at,by){
+  if(!at) return '<span class="vtag never">📊 never verified</span>';
+  const old=(Date.now()-new Date(at).getTime())/864e5 > VER_STALE_DAYS;
+  return `<span class="vtag ${old?"old":"ok"}">📊 verified ${fmtD(at)}${by?` · ${esc(by)}`:""}</span>`;
+}
+function actRows(list, showItem){
+  if(!list||!list.length) return '<div class="muted">No quantity changes logged yet.</div>';
+  return '<div class="hist act">'+list.map(a=>{
+    const n=Number(a.change)||0;
+    return `<div class="h"${showItem?` style="cursor:pointer" onclick="lookup('${esc(a.sku)}')"`:""}>
+      <span style="min-width:0"><span class="chg ${n<0?"down":"up"}">${n>0?"+":""}${n}</span> <b>${esc(a.reason||"")}</b>${a.qty_after!=null?` <span class="muted">→ ${a.qty_after}</span>`:""}
+        ${showItem?`<div style="font-size:12px">${esc(a.title||"")} <span class="muted mono">${esc(a.sku)}</span></div>`:""}
+        ${a.detail?`<div class="muted" style="font-size:12px">${esc(a.detail)}</div>`:""}</span>
+      <span class="muted" style="white-space:nowrap;text-align:right">${esc(a.user_name||"")}<br>${fmt(a.ts)}</span></div>`;
+  }).join("")+'</div>';
+}
 function renderItem(d){
   currentView=null; // item views aren't auto-refreshed (avoids clobbering a move in progress)
+  const v = d.verification;
   const bins = tokens(d.current_bin);
   const chips = bins.length ? bins.map(bn=>`<span class="binchip">📍 ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin">✕</button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
   const binPill = bins.length ? `<span class="pill bin">📍 ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
@@ -513,8 +561,18 @@ function renderItem(d){
           <div style="margin-top:6px">${binPill}${osPill}</div>
         </div>
       </div>
+      <div class="verline">${verTag(v&&v.verified_at, v&&v.verified_by)}${v&&v.counted_qty!=null?`<span class="muted">counted ${v.counted_qty}</span>`:""}</div>
       <div class="qtygrid"><div class="k" style="align-self:end">On hand (all stores)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
       <table style="margin-top:10px"><thead><tr><th>Store</th><th>Status</th><th class="n">Qty</th></tr></thead><tbody>${storesRows(d.stores)}</tbody></table>
+      <div class="moverow" style="margin-top:12px">
+        <button class="btn blue" style="flex:1;padding:12px" onclick="openAdjust('${esc(d.sku)}')">± Adjust quantity</button>
+        <button class="btn sec" style="flex:1;padding:12px" onclick="openVerify('${esc(d.sku)}')">📊 Verify count</button>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center"><div class="sectlabel" style="margin-top:0;flex:1">Quantity activity</div>
+        ${(d.activity&&d.activity.length>=20)?`<a href="#" style="color:var(--accent2);font-size:13px" onclick="showSkuActivity('${esc(d.sku)}');return false">See all</a>`:""}</div>
+      <div id="actbox">${actRows(d.activity)}</div>
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Bins (${bins.length}/3)</div>
@@ -548,7 +606,7 @@ function renderBin(d){
   currentView={kind:"bin",key:d.bin}; // keep this bin view live
   const b=esc(d.bin);
   const rows = (d.items&&d.items.length)? d.items.map(it=>`<tr>
-      <td onclick="lookup('${esc(it.sku)}')" style="cursor:pointer"><div class="mono">${esc(it.sku)}</div><div class="muted" style="font-size:12px">${esc(it.title||"")}</div></td>
+      <td onclick="lookup('${esc(it.sku)}')" style="cursor:pointer"><div class="mono">${esc(it.sku)}</div><div class="muted" style="font-size:12px">${esc(it.title||"")}</div><div>${verTag(it.verified_at,it.verified_by)}</div></td>
       <td class="n"><button class="btn ghost" style="padding:6px 12px" onclick="removeFromBin('${esc(it.sku)}','${b}')">Remove</button></td>
     </tr>`).join("")
     : '<tr><td colspan="2" class="muted">No items in this bin yet — add one below.</td></tr>';
@@ -653,6 +711,7 @@ function refreshNow(){
   const b=$("refreshBtn"); if(b){ b.classList.add("spin"); setTimeout(()=>b.classList.remove("spin"),700); }
   if(!$("tab-bins").classList.contains("hidden")){ loadBins(); }
   else if(!$("tab-search").classList.contains("hidden")){ doFind(); }
+  else if(!$("tab-activity").classList.contains("hidden")){ loadActivity(); }
   else if(currentView && currentView.kind==="bin"){ api("/api/bin/"+encodeURIComponent(currentView.key)).then(d=>{ if(d && !d.error) renderBin(d); }).catch(()=>{}); }
   else if(lastCode){ lookup(lastCode); }
   toast("Refreshed");
@@ -711,7 +770,7 @@ function renderFind(){
   $("searchres").innerHTML='<div class="muted" style="margin-bottom:8px">'+rows.length+' of '+total+' shown</div>'+
     '<table><thead><tr><th>Item</th><th class="n">Qty</th><th>Bin</th><th>Box</th></tr></thead><tbody>'+
     rows.map(it=>`<tr onclick="lookup('${esc(it.sku||"")}')" style="cursor:pointer">
-      <td><div>${esc(it.title||"")}</div><div class="muted" style="font-size:12px">${esc(it.brand)} · <span class="mono">${esc(it.sku||"—")}</span>${it.status&&String(it.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(it.status).toLowerCase()==="archived"?"inactive":String(it.status).toLowerCase())}`:""}</div></td>
+      <td><div>${esc(it.title||"")}</div><div class="muted" style="font-size:12px">${esc(it.brand)} · <span class="mono">${esc(it.sku||"—")}</span>${it.status&&String(it.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(it.status).toLowerCase()==="archived"?"inactive":String(it.status).toLowerCase())}`:""}</div><div>${verTag(it.verified_at,it.verified_by)}</div></td>
       <td class="n"><b>${it.qty==null?"—":it.qty}</b></td>
       <td>${it.bin?`<span class="mono">${esc(it.bin)}</span>`:'<span class="muted">—</span>'}</td>
       <td style="white-space:nowrap">${it.overstock_box?`<span class="mono">${esc(it.overstock_box)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join("")+
@@ -743,7 +802,7 @@ function renderOrder(d, mount){
     const oh = it.on_hand==null ? '<span class="muted">—</span>' : `<b>${it.on_hand}</b>`;
     return `<tr onclick="lookup('${esc(it.sku)}')" style="cursor:pointer">
       <td>${binCell}</td>
-      <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div>
+      <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div><div>${verTag(it.verified_at,it.verified_by)}</div>
         <button class="oosbtn" onclick="event.stopPropagation();openOos('${esc(d.order_number)}','${esc(it.sku)}')" title="Can't find it — email the customer">⚠️ Out of stock</button></td>
       <td class="n"><span class="big" style="font-size:22px">${it.qty}</span></td>
       <td class="n">${oh}</td>
@@ -911,9 +970,107 @@ async function submitVerify(sku){
     else if(r.corrected) msg=`Corrected Shopify → ${r.counted}`;
     else { msg=`Counted ${r.counted} · ⚠️ Shopify not updated`; bad=true; }
     toast(msg, bad);
-    loadStockList(stockPage); loadStockSummary();
+    if(!$("tab-verify").classList.contains("hidden")){ loadStockList(stockPage); loadStockSummary(); }
+    else if(!$("tab-scan").classList.contains("hidden")) lookup(sku); // opened from the product view → refresh it
   }catch(e){ toast("Failed",true); btns.forEach(b=>b.disabled=false); }
 }
+/* ---------- Adjust quantity (from the product view) ---------- */
+let ADJ={sku:null,from:null,reason:null};
+function closeAdjust(){ $("adjustModal").classList.remove("show"); }
+async function openAdjust(sku){
+  const m=$("adjustModal"), box=$("adjustBox");
+  ADJ={sku,from:null,reason:null};
+  box.innerHTML='<div class="center muted" style="padding:34px">Reading Shopify…</div>'; m.classList.add("show");
+  let d; try{ d=await api("/api/stock/live/"+encodeURIComponent(sku)); }
+  catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closeAdjust()">Close</button></div>'; return; }
+  if(d.error||!(d.brands||[]).length){ box.innerHTML=`<div style="padding:8px"><h3>Can't adjust this item</h3><p class="muted">${esc(d.error||"This SKU wasn't found in Shopify.")}</p><button class="btn sec wide" onclick="closeAdjust()">Close</button></div>`; return; }
+  ADJ.from=d.on_hand;
+  const multi=d.brands.length>1;
+  const v=d.verification;
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">± Adjust quantity</h3><button class="btn sec" style="padding:6px 12px" onclick="closeAdjust()">✕</button></div>
+    <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
+    <div class="sub mono" style="margin-bottom:4px">SKU ${esc(sku)}</div>
+    <div style="margin-bottom:8px">${verTag(v&&v.verified_at, v&&v.verified_by)}</div>
+    <div class="card" style="margin:0 0 10px;padding:6px 12px">
+      <div class="row"><span class="k">Shopify on hand now</span><span class="big" style="font-size:22px">${d.on_hand==null?"—":d.on_hand}</span></div>
+      ${multi?d.brands.map(b=>`<div class="row"><span class="k">${esc(b.brand)}</span><span class="v">${b.on_hand==null?"—":b.on_hand}</span></div>`).join(""):""}
+    </div>
+    ${d.on_hand==null?'<div class="note" style="color:var(--warn)">Couldn\'t read the current number from Shopify — enter the new quantity directly.</div>':""}
+    <div class="sectlabel" style="margin-top:0">New on-hand quantity</div>
+    <div class="stepper">
+      <button class="btn sec" type="button" onclick="adjStep(-1)">−</button>
+      <input id="adjqty" type="text" inputmode="numeric" value="${d.on_hand==null?"":d.on_hand}" oninput="adjDelta()" onkeydown="if(event.key==='Enter')submitAdjust()">
+      <button class="btn sec" type="button" onclick="adjStep(1)">+</button>
+    </div>
+    <div class="delta" id="adjdelta"></div>
+    <div id="adjkeypad" class="keypad">
+      ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="adjPad('${n}')">${n}</button>`).join("")}
+      <button type="button" class="wide" onclick="adjPadClear()">Clear</button>
+      <button type="button" onclick="adjPad('0')">0</button>
+      <button type="button" onclick="adjPadDel()">⌫</button>
+    </div>
+    <div class="sectlabel">Why?</div>
+    <div class="reasons" id="adjreasons">${(d.reasons||[]).map(r=>`<button type="button" data-r="${esc(r)}" onclick="adjReason(this)">${esc(r)}</button>`).join("")}</div>
+    <input id="adjnote" data-osk="1" inputmode="none" placeholder="Note (optional) — e.g. torn seam, found behind bin 12" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:10px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:11px;font-size:14px">
+    <label class="vtoggle" style="margin-top:12px;align-items:flex-start"><input type="checkbox" id="adjcounted" style="margin-top:2px"> I counted the whole shelf — also record this as a stock verification</label>
+    <div class="moverow" style="margin-top:12px">
+      <button class="btn sec" style="padding:14px 16px" onclick="closeAdjust()">Cancel</button>
+      <button class="btn" style="flex:1;padding:14px" id="adjsave" onclick="submitAdjust()">Save to Shopify</button>
+    </div>
+    <div class="note">Logged under <b>${esc(whoName()||"you")}</b> with the reason you pick.</div>`;
+  const c=$("adjqty"); if(IS_TOUCH){ if(c) c.setAttribute("readonly","readonly"); }
+  adjDelta();
+}
+function adjVal(){ const c=$("adjqty"); const s=c?c.value.trim():""; return s===""?null:Number(s); }
+function adjSet(n){ const c=$("adjqty"); if(!c) return; c.value=(n==null?"":String(Math.max(0,n))); adjDelta(); }
+function adjStep(d){ const cur=adjVal(); adjSet((cur==null?(ADJ.from||0):cur)+d); }
+function adjPad(d){ const c=$("adjqty"); if(!c) return; const s=(c.dataset.fresh==="0"?c.value:""); c.dataset.fresh="0"; if(s.length<6) c.value=(s==="0"?"":s)+d; adjDelta(); }
+function adjPadDel(){ const c=$("adjqty"); if(!c) return; c.dataset.fresh="0"; c.value=c.value.slice(0,-1); adjDelta(); }
+function adjPadClear(){ const c=$("adjqty"); if(!c) return; c.dataset.fresh="0"; c.value=""; adjDelta(); }
+function adjDelta(){
+  const el=$("adjdelta"); if(!el) return; const n=adjVal();
+  if(n==null||!Number.isFinite(n)){ el.innerHTML='<span class="muted">Enter the new quantity</span>'; return; }
+  if(ADJ.from==null){ el.innerHTML=`<span class="muted">Set to ${n}</span>`; return; }
+  const d=n-ADJ.from;
+  el.innerHTML = d===0 ? '<span class="muted">No change</span>'
+    : `<span style="color:${d<0?"var(--bad)":"var(--accent)"}">${d>0?"+":""}${d}</span> <span class="muted">(${ADJ.from} → ${n})</span>`;
+}
+function adjReason(b){ document.querySelectorAll("#adjreasons button").forEach(x=>x.classList.toggle("on",x===b)); ADJ.reason=b.dataset.r; }
+async function submitAdjust(){
+  const n=adjVal();
+  if(n==null||!Number.isInteger(n)||n<0){ toast("Enter a whole number",true); return; }
+  if(!ADJ.reason){ toast("Pick a reason",true); return; }
+  const counted=$("adjcounted")&&$("adjcounted").checked;
+  if(n===ADJ.from && !counted){ toast("That's the same as Shopify — nothing to change",true); return; }
+  const note=$("adjnote")?$("adjnote").value.trim():"";
+  const btns=$("adjustBox").querySelectorAll("button"); btns.forEach(b=>b.disabled=true);
+  try{
+    const r=await api("/api/stock/adjust",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,sku:ADJ.sku,qty:n,reason:ADJ.reason,note,counted})});
+    if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
+    closeAdjust();
+    let msg;
+    if(r.verified) msg = r.matched ? `Verified ✓ — matches ${n}` : (r.corrected ? `Shopify → ${n} · verified` : `Verified ${n} · ⚠️ Shopify not updated`);
+    else msg = `Shopify → ${n}${r.failed&&r.failed.length?` · ⚠️ ${r.failed.map(f=>f.brand).join(", ")} failed`:""}`;
+    toast(msg, !!(r.failed&&r.failed.length) || (r.verified&&!r.matched&&!r.corrected));
+    lookup(ADJ.sku);
+  }catch(e){ toast("Save failed",true); btns.forEach(b=>b.disabled=false); }
+}
+
+/* ---------- Quantity activity screen ---------- */
+async function loadActivity(){
+  const el=$("actList"); if(!el) return;
+  el.innerHTML='<div class="muted center">Loading…</div>';
+  const p=new URLSearchParams(); const q=$("actq").value.trim(); if(q)p.set("q",q); if($("actdrops").checked)p.set("drops","1");
+  try{
+    const d=await api("/api/activity?"+p.toString());
+    const s=d.shipments||{};
+    const status = s.at ? `<div class="note" style="margin:0 0 8px;text-align:left">Shipments pulled from ShipStation every 10 min · last pull ${fmt(s.at)}${s.error?` · <span style="color:var(--bad)">${esc(s.error)}</span>`:""}</div>` : "";
+    el.innerHTML = status + actRows(d.activity, true);
+  }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load.</div>'; }
+}
+function showSkuActivity(sku){ $("actq").value=sku; $("actdrops").checked=false; showTab("activity"); }
+
 /* ---------- Strays / put back ---------- */
 let PB_QTY=1;
 async function loadStrays(){
@@ -947,7 +1104,7 @@ async function strayLookup(){
       const lo=it.on_hand!=null&&it.on_hand<3, z=it.on_hand===0;
       return `<button class="menuitem" style="width:100%;border:1px solid var(--line);margin-bottom:6px;border-radius:10px" onclick="openPutback('${esc(it.sku)}')">
         <span style="min-width:34px;text-align:center;font-weight:800;font-size:18px;color:${z?'var(--bad)':lo?'var(--warn)':'var(--ink)'}">${it.on_hand==null?"—":it.on_hand}</span>
-        <span style="flex:1;text-align:left;min-width:0"><div>${esc(it.title||it.sku)}</div><div class="vsub"><span class="mono">${esc(it.sku)}</span> · ${esc(it.brand||"")}${it.bin?` · 📍 ${esc(it.bin)}`:""}</div></span></button>`;
+        <span style="flex:1;text-align:left;min-width:0"><div>${esc(it.title||it.sku)}</div><div class="vsub"><span class="mono">${esc(it.sku)}</span> · ${esc(it.brand||"")}${it.bin?` · 📍 ${esc(it.bin)}`:""}</div><div>${verTag(it.verified_at,it.verified_by)}</div></span></button>`;
     }).join("");
   }catch(e){ toast("Search failed",true); }
 }
@@ -965,7 +1122,8 @@ async function openPutback(sku){
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">🔄 Put back</h3><button class="btn sec" style="padding:6px 12px" onclick="closePutback()">✕</button></div>
     <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
-    <div class="sub mono" style="margin-bottom:8px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div class="sub mono" style="margin-bottom:4px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div style="margin-bottom:8px">${verTag(d.last&&d.last.verified_at, d.last&&d.last.verified_by)}</div>
     <div class="card" style="margin:0 0 10px;padding:6px 12px">
       <div class="row"><span class="k">Shopify on hand</span><span class="big" style="font-size:22px;${low?'color:var(--warn)':''}">${sys==null?"—":sys}</span></div>
     </div>

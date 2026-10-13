@@ -16,7 +16,7 @@ A phone-friendly warehouse app that sits on top of **Shopify** (quantity) and **
                                      ├──►  Shopify (×3 stores)  read quantity by SKU / UPC
                                      └──►  ShipStation V1       read/write product warehouseLocation
 ```
-- **Quantity is read-only** from Shopify (never changed by this app).
+- **Quantity** is read from Shopify; it is only written by a stock verification or an Adjust quantity save (both logged).
 - **Bin location is read/write**: DB is the source of truth; ShipStation is kept in sync on every save.
 - SKU is the join key across Shopify, ShipStation, and the local DB.
 
@@ -44,6 +44,15 @@ The database schema is created automatically on first boot (idempotent `CREATE T
 - `POST /api/move` `{sku,toBin,user,note,qtySeen}` — set/move bin (DB + history + ShipStation push)
 - `GET /api/bins` · `POST /api/bins` `{code,label}` · `GET /api/search?q=`
 
+## Quantity: verification, adjustments, activity log
+- **Last verified** — every place a product appears (scan result, Items search, pick list, bin view, strays, put-back) shows when it was last stock-verified and by whom. Amber = never, or more than 30 days ago.
+- **Adjust quantity** — from the product view, set a new on-hand number with a reason (Damaged, Lost / missing, Found extra, Customer return, Received, Count correction, Other) and an optional note. Writes Shopify on-hand (with the matching Shopify reason code). Tick "I counted the whole shelf" to also record it as a stock verification.
+- **Quantity activity log** (`stock_activity`) — one row per change: +/− amount, before → after, reason, note, who, when.
+  - **Shipped**: ShipStation shipments are pulled every 10 minutes (first boot back-fills 14 days). One row per shipment + SKU, with order number and tracking. A label voided after we logged it adds a matching **Label voided** (+) row; one voided before we ever saw it is skipped.
+  - **Adjustments** and **stock-verification corrections** from this app.
+  - Changes made directly in Shopify admin aren't captured (Shopify's API doesn't expose its adjustment history).
+
+API: `GET /api/stock/live/:sku` · `POST /api/stock/adjust {sku,qty,reason,note,counted}` · `GET /api/activity/:sku` · `GET /api/activity?q=&drops=1`
+
 ## Notes & future
 - v1 tracks **one primary bin per SKU** (matches ShipStation's single `warehouseLocation`). Multi-bin/split stock can be added later.
-- Quantity adjustments (cycle counts written back to Shopify) are intentionally out of scope for v1 — read-only by design.
