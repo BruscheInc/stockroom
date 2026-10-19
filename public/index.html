@@ -171,6 +171,10 @@
   .stepper .btn{font-size:26px;width:58px;height:58px;padding:0}
   .stepper input{width:120px;font-size:36px;font-weight:800;text-align:center;padding:8px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:12px}
   .delta{text-align:center;font-weight:700;font-size:14px;min-height:20px}
+  .invtbl{font-size:13px} .invtbl th{font-size:10.5px;padding:7px 4px} .invtbl td{padding:8px 4px}
+  .invtbl tr.inact td{opacity:.55}
+  .invsum{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:6px}
+  .invsum b{color:var(--ink)}
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -568,9 +572,25 @@ async function lookup(code, opts){
   if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar());
   setTimeout(armScanner,0); // re-arm for the next scan (no tap needed)
 }
-function storesRows(stores){
-  if(!stores||!stores.length) return '<tr><td class="muted" colspan="3">Not found in any store</td></tr>';
-  return stores.map(s=>`<tr><td>${esc(s.brand)}</td><td class="muted">${esc(s.status||"")}</td><td class="n"><b>${s.qty==null?"—":s.qty}</b></td></tr>`).join("");
+// Shopify's inventory columns per store. Active listings count; archived/draft are listed apart and never added in.
+const stName=(st)=>{ const x=String(st||"").toLowerCase(); return x==="archived"?"archived":x; };
+function invRow(s){
+  const L=s.levels;
+  const c=(v,b)=>`<td class="n">${v==null?"—":(b?`<b>${v}</b>`:v)}</td>`;
+  return `<tr><td>${esc(s.brand)}${L&&L.locations&&L.locations.length>1?`<div class="muted" style="font-size:11px">${L.locations.length} locations</div>`:""}</td>`
+    + (L ? c(L.unavailable)+c(L.committed)+c(L.available)+c(L.on_hand,true) : `<td class="n muted" colspan="3"></td>${c(s.qty,true)}`) + `</tr>`;
+}
+function stockBlock(d){
+  const st=d.stores||[];
+  if(!st.length) return '<div class="muted" style="margin-top:10px">Not found in any store.</div>';
+  const act=st.filter(x=>x.active), inact=st.filter(x=>!x.active);
+  const head='<thead><tr><th>Store</th><th class="n">Unavail.</th><th class="n">Committed</th><th class="n">Available</th><th class="n">On hand</th></tr></thead>';
+  let body=act.map(invRow).join("");
+  if(!act.length) body=`<tr><td colspan="5" style="color:var(--warn)">No active listing — not counted as stock.</td></tr>`;
+  if(inact.length) body+=`<tr><td colspan="5" class="sectlabel" style="border-bottom:none;padding:12px 4px 2px">Archived / draft — not counted</td></tr>`
+    + inact.map(s=>invRow({...s,brand:s.brand+" · "+stName(s.status)}).replace("<tr>",'<tr class="inact">')).join("");
+  let h=`<table class="invtbl" style="margin-top:10px">${head}<tbody>${body}</tbody></table>`;
+  return h;
 }
 function histRows(h){
   if(!h||!h.length) return '<div class="muted">No location history yet.</div>';
@@ -617,8 +637,9 @@ function renderItem(d){
         </div>
       </div>
       <div class="verline">${verTag(v&&v.verified_at, v&&v.verified_by)}${v&&v.counted_qty!=null?`<span class="muted">counted ${v.counted_qty}</span>`:""}</div>
-      <div class="qtygrid"><div class="k" style="align-self:end">On hand (all stores)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
-      <table style="margin-top:10px"><thead><tr><th>Store</th><th>Status</th><th class="n">Qty</th></tr></thead><tbody>${storesRows(d.stores)}</tbody></table>
+      <div class="qtygrid"><div class="k" style="align-self:end">On hand (active)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
+      ${d.totals&&d.totals.available!=null?`<div class="invsum"><span><b>${d.totals.available}</b> available</span><span><b>${d.totals.committed}</b> committed</span><span><b>${d.totals.unavailable}</b> unavailable</span></div>`:""}
+      ${stockBlock(d)}
       <div class="moverow" style="margin-top:12px">
         <button class="btn blue" style="flex:1;padding:12px" onclick="openAdjust('${esc(d.sku)}')">± Adjust quantity</button>
         <button class="btn sec" style="flex:1;padding:12px" onclick="openVerify('${esc(d.sku)}')">📊 Verify count</button>
@@ -978,7 +999,7 @@ async function openVerify(sku){
   let d; try{ d=await api("/api/stock/item/"+encodeURIComponent(sku)); }
   catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closeVerify()">Close</button></div>'; return; }
   const sys=d.system_qty;
-  const brands=(d.brands||[]).map(b=>`<div class="row"><span class="k">${esc(b.brand)}</span><span class="v">${b.on_hand==null?"—":b.on_hand}${b.status&&String(b.status).toUpperCase()!=="ACTIVE"?` · ${esc(String(b.status).toLowerCase())}`:""}</span></div>`).join("");
+  const brands=(d.brands||[]).map(b=>`<div class="row"${b.active===false?' style="opacity:.55"':""}><span class="k">${esc(b.brand)}${b.active===false?` · ${esc(stName(b.status))} (not counted)`:""}</span><span class="v">${b.on_hand==null?"—":b.on_hand}</span></div>`).join("");
   const last=d.last?`Last verified ${fmt(d.last.verified_at)} by ${esc(d.last.verified_by||"?")} — counted ${d.last.counted_qty}${d.last.corrected?` · corrected Shopify to ${d.last.counted_qty}`:(d.last.matched===false?" · ⚠️ mismatch (not corrected)":"")}`:"Never verified yet.";
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">📊 Verify stock</h3><button class="btn sec" style="padding:6px 12px" onclick="closeVerify()">✕</button></div>
@@ -1049,7 +1070,7 @@ async function openAdjust(sku){
     <div style="margin-bottom:8px">${verTag(v&&v.verified_at, v&&v.verified_by)}</div>
     <div class="card" style="margin:0 0 10px;padding:6px 12px">
       <div class="row"><span class="k">Shopify on hand now</span><span class="big" style="font-size:22px">${d.on_hand==null?"—":d.on_hand}</span></div>
-      ${multi?d.brands.map(b=>`<div class="row"><span class="k">${esc(b.brand)}</span><span class="v">${b.on_hand==null?"—":b.on_hand}</span></div>`).join(""):""}
+      ${multi?d.brands.map(b=>`<div class="row"${b.active===false?' style="opacity:.55"':""}><span class="k">${esc(b.brand)}${b.active===false?` · ${esc(stName(b.status))} (not changed)`:""}</span><span class="v">${b.on_hand==null?"—":b.on_hand}</span></div>`).join(""):""}
     </div>
     ${d.on_hand==null?'<div class="note" style="color:var(--warn)">Couldn\'t read the current number from Shopify — enter the new quantity directly.</div>':""}
     <div class="sectlabel" style="margin-top:0">New on-hand quantity</div>

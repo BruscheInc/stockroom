@@ -261,8 +261,37 @@ async function storeGraphQL(st, query, variables) {
 const VARIANT_QUERY = `query($q:String!){ productVariants(first:5, query:$q){ edges{ node{
   sku barcode displayName inventoryQuantity price
   image{ url } product{ title featuredImage{ url } status }
-  inventoryItem{ id }
+  inventoryItem{ id inventoryLevels(first:10){ edges{ node{ location{ name } quantities(names:["available","committed","on_hand","reserved","damaged","quality_control","safety_stock"]){ name quantity } } } } }
 }}}}`;
+// Shopify's inventory columns, per location and summed. "Unavailable" = damaged + quality control + safety stock + reserved,
+// the same way Shopify admin adds it up.
+function levelsOf(node) {
+  const locs = [];
+  for (const e of (node?.inventoryItem?.inventoryLevels?.edges || [])) {
+    const q = {}; for (const x of (e.node.quantities || [])) q[x.name] = Number(x.quantity) || 0;
+    locs.push({ location: e.node.location?.name || "", on_hand: q.on_hand ?? 0, available: q.available ?? 0, committed: q.committed ?? 0,
+      unavailable: (q.damaged || 0) + (q.quality_control || 0) + (q.safety_stock || 0) + (q.reserved || 0) });
+  }
+  if (!locs.length) return null;
+  const sum = (k) => locs.reduce((a, l) => a + l[k], 0);
+  return { on_hand: sum("on_hand"), available: sum("available"), committed: sum("committed"), unavailable: sum("unavailable"), locations: locs };
+}
+// Only ACTIVE listings count toward stock. Archived/draft listings are shown on their own and never added in.
+const isActive = (status) => String(status || "").toUpperCase() === "ACTIVE";
+function activeOnly(rows, statusKey = "status") { const a = rows.filter((r) => isActive(r[statusKey])); return a.length ? a : rows; }
+// Per-store rows for the product view, plus totals over ACTIVE listings only.
+function stockSummary(matches) {
+  const stores = matches.map((m) => ({ brand: m.brand, qty: m.levels ? m.levels.on_hand : m.qty, status: m.status, variant: m.variant, price: m.price,
+    active: isActive(m.status), levels: m.levels || null }));
+  const act = stores.filter((x) => x.active);
+  const tot = (k) => act.length && act.every((x) => x.levels) ? act.reduce((a, x) => a + x.levels[k], 0) : null;
+  return {
+    stores,
+    total_qty: act.length ? act.reduce((a, x) => a + (Number(x.qty) || 0), 0) : null,   // on hand, active only
+    totals: act.length ? { on_hand: tot("on_hand"), available: tot("available"), committed: tot("committed"), unavailable: tot("unavailable") } : null,
+    inactive_qty: stores.filter((x) => !x.active).reduce((a, x) => a + (Number(x.qty) || 0), 0),
+  };
+}
 // Look a SKU or barcode up across all stores. Returns per-store matches (a SKU may live in one or several brands).
 async function shopifyFind({ sku, barcode }) {
   const q = sku ? `sku:${JSON.stringify(sku)}` : `barcode:${JSON.stringify(barcode)}`;
@@ -279,7 +308,7 @@ async function shopifyFind({ sku, barcode }) {
           brand: st.brand, domain: st.domain,
           sku: n.sku, barcode: n.barcode, title: n.product?.title || n.displayName,
           variant: n.displayName, qty: n.inventoryQuantity, price: n.price,
-          status: n.product?.status,
+          status: n.product?.status, levels: levelsOf(n),
           image: n.image?.url || n.product?.featuredImage?.url || null,
         });
       }
@@ -410,7 +439,7 @@ async function liveOnHand(sku) {
         if (q && q.quantity != null) { onHand = Number(q.quantity); await db(`UPDATE stock_items SET on_hand=$1, synced_at=now() WHERE sku=$2 AND brand=$3`, [onHand, sku, r.brand]); }
       } catch (e) { /* leave null */ }
     }
-    out.push({ brand: r.brand, title: r.title, status: r.status, on_hand: onHand, cached_on_hand: r.on_hand });
+    out.push({ brand: r.brand, title: r.title, status: r.status, active: isActive(r.status), on_hand: onHand, cached_on_hand: r.on_hand });
   }
   return out;
 }
@@ -428,7 +457,7 @@ const ADJUST_REASONS = {
 // meta = { reason, detail, user, shopReason, uri } — when reason is given, the change is written to the activity log.
 async function shopifySetOnHand(sku, qty, meta) {
   meta = meta || {};
-  const rows = (await db(`SELECT brand, title, inv_item_id, on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+  const rows = activeOnly((await db(`SELECT brand, title, inv_item_id, on_hand, status FROM stock_items WHERE sku=$1`, [sku])).rows);
   const out = [];
   const setOne = async (st, invItemId, lvl, reason) => {
     const idem = require("crypto").randomUUID();
@@ -746,7 +775,7 @@ async function buildPickList(rawCode) {
     let on_hand = null, title = base.name, image = base.image, status = null;
     try {
       const f = (await shopifyFind({ sku })).filter((m) => !m.error);
-      if (f.length) { on_hand = f.reduce((s, m) => s + (Number(m.qty) || 0), 0); title = f[0].title || title; image = f.find((m) => m.image)?.image || image; status = f[0].status || null; }
+      if (f.length) { const act = f.filter((m) => isActive(m.status)); on_hand = act.length ? act.reduce((s, m) => s + (Number(m.levels ? m.levels.on_hand : m.qty) || 0), 0) : null; title = f[0].title || title; image = f.find((m) => m.image)?.image || image; status = f[0].status || null; }
     } catch {}
     const ver = verBySku[sku];
     return { sku, name: title, qty: base.qty, unit_price: base.unit_price, bin, on_hand, image, status,
@@ -849,8 +878,7 @@ async function resolveCode(raw) {
     return {
       type: "item", matched_by: matchedBy, sku, title: matches[0].title, barcode: matches[0].barcode,
       image: matches.find((m) => m.image)?.image || null,
-      stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
-      total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
+      ...stockSummary(matches),
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       overstock: await overstockFor(sku),
       history: await getHistory(sku, 15),
@@ -1217,8 +1245,7 @@ app.get("/api/item/:sku", async (req, res) => {
     res.json({
       sku, title: matches[0]?.title || loc?.title || null, barcode: matches[0]?.barcode || loc?.barcode || null,
       image: matches.find((m) => m.image)?.image || null,
-      stores: matches.map((m) => ({ brand: m.brand, qty: m.qty, status: m.status, variant: m.variant, price: m.price })),
-      total_qty: matches.reduce((s, m) => s + (Number(m.qty) || 0), 0),
+      ...stockSummary(matches),
       current_bin: currentBin, location_updated_at: loc?.updated_at || null, location_updated_by: loc?.updated_by || null,
       overstock: await overstockFor(sku),
       history: await getHistory(sku, 50),
@@ -1395,15 +1422,16 @@ app.get("/api/stock/item/:sku", async (req, res) => {
     const last = (await db(`SELECT counted_qty,system_qty,matched,corrected,verified_by,verified_at,note FROM stock_verifications WHERE sku=$1`, [sku])).rows[0] || null;
     const bin = (await db(`SELECT bin FROM item_location WHERE sku=$1`, [sku])).rows[0]?.bin || null;
     const history = (await db(`SELECT counted_qty,system_qty,corrected,correction_note,user_name,note,ts FROM stock_verification_log WHERE sku=$1 ORDER BY ts DESC LIMIT 30`, [sku])).rows;
-    const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
-    res.json({ sku, title: items[0]?.title || null, bin, brands: items, system_qty: items.length ? system : null, last, history });
+    const act = activeOnly(items);
+    const system = act.length ? act.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
+    res.json({ sku, title: items[0]?.title || null, bin, brands: items.map((r) => ({ ...r, active: isActive(r.status) })), system_qty: act.length ? system : null, last, history });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Record a physical count (who/when) and correct Shopify on-hand to it when it differs.
 // Shared by /api/stock/verify and the low-stock path of /api/stock/putback. Returns the result object.
 // meta (optional) = { reason, detail, shopReason } — overrides how the correction is labelled in the activity log.
 async function doVerify(sku, cnt, by, note, meta) {
-  const items = (await db(`SELECT brand,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+  const items = activeOnly((await db(`SELECT brand,on_hand,status FROM stock_items WHERE sku=$1`, [sku])).rows);
   const system = items.length ? items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), 0) : null;
   const matched = system != null && cnt === system;
   let correction = null, correctionNote = null;
@@ -1448,7 +1476,7 @@ app.post("/api/stock/putback", async (req, res) => {
     const putQty = qty === undefined || qty === null || qty === "" ? 1 : Number(qty);
     if (!Number.isFinite(putQty) || putQty < 1) return res.status(400).json({ error: "quantity must be at least 1" });
     const by = actorOf(req);
-    const items = (await db(`SELECT brand,title,on_hand FROM stock_items WHERE sku=$1`, [sku])).rows;
+    const items = activeOnly((await db(`SELECT brand,title,on_hand,status FROM stock_items WHERE sku=$1`, [sku])).rows);
     if (!items.length) return res.status(404).json({ error: "item not found in stock" });
     const system = items.reduce((m, r) => (r.on_hand != null ? Math.max(m, r.on_hand) : m), null);
     const title = items.find((r) => r.title)?.title || null;
@@ -1493,7 +1521,7 @@ app.get("/api/stock/live/:sku", async (req, res) => {
   try {
     const sku = req.params.sku;
     const brands = await liveOnHand(sku);
-    const vals = brands.map((b) => b.on_hand).filter((v) => v != null);
+    const vals = activeOnly(brands).map((b) => b.on_hand).filter((v) => v != null);
     res.json({ sku, title: brands.find((b) => b.title)?.title || null, brands, on_hand: vals.length ? Math.max(...vals) : null,
       verification: await lastVerification(sku), reasons: Object.keys(ADJUST_REASONS) });
   } catch (e) { res.status(500).json({ error: e.message }); }
