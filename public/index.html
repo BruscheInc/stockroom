@@ -341,12 +341,17 @@
         <label class="muted" style="font-size:13px">Keep <input id="brTarget" type="number" min="1" value="24" oninput="renderBinReport()" style="width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"> units</label>
         <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
+      <label class="muted" style="font-size:13px;display:block;margin-top:10px">Sort
+        <select id="brSort" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
+          <option value="qty_asc">Item quantity: low → high</option><option value="qty_desc">Item quantity: high → low</option>
+          <option value="bin_asc">Bin number: low → high</option><option value="bin_desc">Bin number: high → low</option></select></label>
       <div id="brLetters" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button class="chip on" id="brVUnits" onclick="brView('units')">Shelving units</button>
         <button class="chip" id="brVBins" onclick="brView('bins')">Bins</button>
         <button class="chip" id="brVMove" onclick="brView('move')">Move list</button>
         <span style="flex:1"></span>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="loadBinReport(true)">⟳</button>
         <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brCsv()">⬇ CSV</button>
         <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brPrint()">🖨️ Print</button>
       </div>
@@ -369,10 +374,10 @@
 </div>
 
 <nav class="tabs">
-  <button id="nav-scan" class="on" onclick="navReset();showTab('scan')"><span class="i">🔍</span>Scan</button>
-  <button id="nav-order" onclick="navReset();showTab('order')"><span class="i">🧾</span>Pick List</button>
-  <button id="nav-bins" onclick="navReset();showTab('bins')"><span class="i">🗄️</span>Bins</button>
-  <button id="nav-search" onclick="navReset();showTab('search')"><span class="i">📋</span>Items</button>
+  <button id="nav-scan" class="on" onclick="goTab('scan')"><span class="i">🔍</span>Scan</button>
+  <button id="nav-order" onclick="goTab('order')"><span class="i">🧾</span>Pick List</button>
+  <button id="nav-bins" onclick="goTab('bins')"><span class="i">🗄️</span>Bins</button>
+  <button id="nav-search" onclick="goTab('search')"><span class="i">📋</span>Items</button>
 </nav>
 </div>
 
@@ -467,7 +472,9 @@ function showTab(t){
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
 function closeMenu(){ $("drawer").classList.remove("show"); }
-function menuGo(t){ closeMenu(); navReset(); showTab(t); }
+function menuGo(t){ closeMenu(); goTab(t); }
+// Switching screens is a step you can go back (and forward) through, like opening an item.
+function goTab(t){ if(visibleTab()===t){ showTab(t); return; } navPush(); showTab(t); window.scrollTo(0,0); }
 
 /* ---------- scanner arming ----------
    A Bluetooth/USB scanner (e.g. Tera) is a keyboard. On iOS it only feeds a FOCUSED field, and iOS
@@ -538,7 +545,7 @@ let lastCode=null;
    were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
-const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",search:"search results"};
+const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -557,7 +564,8 @@ function showView(e){
     showTab("scan"); $("result").innerHTML=e.html||""; currentView=e.view; lastCode=e.code; LAST_ITEM_SKU=e.sku||null;
     if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar());
   } else showTab(e.tab);
-  setTimeout(()=>window.scrollTo(0,e.y||0),40);
+  // Lists that load from the server need a moment; keep putting the scroll back while they fill in.
+  [40,250,700,1400].forEach(ms=>setTimeout(()=>{ if(Math.abs(window.scrollY-(e.y||0))>4) window.scrollTo(0,e.y||0); },ms));
 }
 function navPush(){
   const e=snapView(); if(e.tab==="scan" && !e.html.trim()) return;
@@ -567,13 +575,33 @@ function navPush(){
 }
 function goBack(){ const e=NAV.pop(); if(!e) return; FWD.push(snapView()); showView(e); }
 function goForward(){ const e=FWD.pop(); if(!e) return; NAV.push(snapView()); showView(e); }
-function backPressed(){ if(history.state&&history.state.sr){ history.back(); } else goBack(); }
+function backPressed(){ if(history.state&&history.state.sr){ const n=NAV.length; history.back(); setTimeout(()=>{ if(NAV.length===n) goBack(); },250); } else goBack(); }
 // Phone back/forward gestures: the history entry's depth says which way we went.
 window.addEventListener("popstate",(ev)=>{
   const depth=(ev.state&&ev.state.sr)||0;
   while(depth<NAV.length && NAV.length) goBack();
   while(depth>NAV.length && FWD.length) goForward();
 });
+/* Swipe right = back, swipe left = forward, on any screen. The home-screen app has no browser gesture of its own. */
+(function(){
+  let x0=0,y0=0,t0=0,on=false,dir=0,ind=null;
+  const blocked=(el)=>{ for(let n=el;n&&n!==document.body;n=n.parentElement){ if(/^(INPUT|TEXTAREA|SELECT|VIDEO|CANVAS)$/.test(n.tagName)) return true; if(n.id==="drawer"||n.classList&&n.classList.contains("noswipe")) return true;
+      const cs=getComputedStyle(n); if((cs.overflowX==="auto"||cs.overflowX==="scroll")&&n.scrollWidth>n.clientWidth+2) return true; } return false; };
+  const show=(dx)=>{ if(!ind){ ind=document.createElement("div"); ind.style.cssText="position:fixed;top:45%;z-index:99;width:44px;height:44px;border-radius:50%;background:rgba(73,182,255,.9);color:#04121f;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;pointer-events:none;transition:opacity .1s"; document.body.appendChild(ind); }
+    const back=dx>0, ok=back?NAV.length>0:FWD.length>0; const p=Math.min(1,Math.abs(dx)/90);
+    ind.textContent=back?"‹":"›"; ind.style.left=back?(Math.min(dx,90)-44+8)+"px":""; ind.style.right=back?"":(Math.min(-dx,90)-44+8)+"px"; ind.style.opacity=ok?String(p):"0"; };
+  const hide=()=>{ if(ind){ ind.remove(); ind=null; } };
+  document.addEventListener("touchstart",(e)=>{ if(e.touches.length!==1||blocked(e.target)){ on=false; return; } const t=e.touches[0]; x0=t.clientX; y0=t.clientY; t0=Date.now(); on=true; dir=0; },{passive:true});
+  document.addEventListener("touchmove",(e)=>{ if(!on) return; const t=e.touches[0], dx=t.clientX-x0, dy=t.clientY-y0;
+    if(!dir){ if(Math.abs(dx)>14&&Math.abs(dx)>Math.abs(dy)*1.6) dir=1; else if(Math.abs(dy)>14){ on=false; return; } }
+    if(dir) show(dx); },{passive:true});
+  document.addEventListener("touchend",(e)=>{ if(!on){ hide(); return; } on=false; const t=e.changedTouches[0], dx=t.clientX-x0, dy=t.clientY-y0; hide();
+    if(!dir||Math.abs(dx)<80||Math.abs(dy)>Math.abs(dx)*0.6||Date.now()-t0>900) return;
+    if(dx>0&&NAV.length){ backPressed(); navigator.vibrate&&navigator.vibrate(15); }
+    else if(dx<0&&FWD.length){ const n=FWD.length; try{ history.forward(); }catch(_){} setTimeout(()=>{ if(FWD.length===n) goForward(); },250); navigator.vibrate&&navigator.vibrate(15); }
+  },{passive:true});
+  document.addEventListener("touchcancel",()=>{ on=false; hide(); });
+})();
 function backBar(){ const e=NAV[NAV.length-1]; if(!e) return "";
   return `<button class="btn sec wide backbar" style="margin-bottom:12px;padding:12px;text-align:left" onclick="backPressed()">‹ Back to ${esc(e.label)}</button>`; }
 
@@ -852,10 +880,19 @@ function brLetterChips(){
     +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${k==="—"?"No letter":esc(k)} <span class="muted">${n[k]}</span></button>`).join("");
 }
 function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); brLetterChips(); if(BRL.size&&BRV==="units") return brView("bins"); renderBinReport(); }
-function brBins(){ return BRL.size? BR.bins.filter(b=>BRL.has(brLetterOf(b.code))) : BR.bins; }
-async function loadBinReport(){
+// Sort: by quantity (units) or by bin number (210-L < 210-U < 211-L), either direction.
+function brCmpCode(a,b){ return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:"base"}); }
+function brSorter(codeOf,qtyOf){ const m=($("brSort")&&$("brSort").value)||"qty_asc";
+  if(m==="bin_asc") return (a,b)=>brCmpCode(codeOf(a),codeOf(b));
+  if(m==="bin_desc") return (a,b)=>brCmpCode(codeOf(b),codeOf(a));
+  if(m==="qty_desc") return (a,b)=>qtyOf(b)-qtyOf(a)||brCmpCode(codeOf(a),codeOf(b));
+  return (a,b)=>qtyOf(a)-qtyOf(b)||brCmpCode(codeOf(a),codeOf(b)); }
+function brBins(){ const l=BRL.size? BR.bins.filter(b=>BRL.has(brLetterOf(b.code))) : BR.bins.slice(); return l.sort(brSorter(b=>b.code,b=>b.units)); }
+async function loadBinReport(force){
+  // Coming back to the report (swipe back from an item) shows it instantly, same filters and scroll.
+  if(!force && BR && BR._at && Date.now()-BR._at<5*60*1000){ renderBinReport(); return; }
   $("brList").innerHTML='<div class="muted center">Loading…</div>';
-  try{ BR=await api("/api/bins/report"); if(BR.error) throw new Error(BR.error);
+  try{ BR=await api("/api/bins/report"); BR._at=Date.now(); if(BR.error) throw new Error(BR.error);
     // Grouping choices, shown with a real bin code so it's clear what each one does (e.g. 210-L → "210-L", "210", "21", "2").
     if(!loadBinReport._set){
       const ex=(BR.bins.find(b=>/^\d+\D/.test(String(b.code)))||BR.bins.find(b=>b.skus)||BR.bins[0]||{code:"210-L"}).code;
@@ -877,12 +914,14 @@ function brUnits(){
   const m={}; for(const b of brBins()){ const u=brUnitOf(b.code); const x=m[u]||(m[u]={unit:u,bins:[],units:0,skus:0,empty:0}); x.bins.push(b); x.units+=b.units; x.skus+=b.skus; if(!b.skus) x.empty++; }
   const list=Object.values(m); list.sort((a,b)=>a.units-b.units||a.skus-b.skus||a.unit.localeCompare(b.unit,undefined,{numeric:true}));
   const keep=Math.max(0,Number($("brTarget").value)||0), clear=Math.max(0,list.length-keep);
-  list.forEach((u,i)=>{ u.clear=i<clear; u.bins.sort((a,b)=>a.units-b.units||String(a.code).localeCompare(String(b.code),undefined,{numeric:true})); });
+  list.forEach((u,i)=>{ u.clear=i<clear; u.bins.sort(brSorter(b=>b.code,b=>b.units)); });   // "Empty this unit" always picks the emptiest units
+  list.sort(brSorter(u=>u.unit,u=>u.units));
   return {list,clear};
 }
 function brMatch(b,q){ return !q || String(b.code).toLowerCase().includes(q) || b.items.some(i=>String(i.sku).toLowerCase().includes(q)||String(i.title||"").toLowerCase().includes(q)); }
 function brItems(b){ if(!b.items.length) return '<div class="muted" style="font-size:12px;padding:4px 0">Empty</div>';
-  return '<table style="font-size:13px">'+b.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}');showTab('scan')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}</span>${i.shared?' <span class="pill" title="This SKU is in more than one bin">also elsewhere</span>':""}${i.inactive?' <span class="muted">(not active)</span>':""}</td><td class="n">${i.qty==null?'<span class="muted">?</span>':`<b>${i.qty}</b>`}</td></tr>`).join("")+'</table>'; }
+  const desc=($("brSort")&&$("brSort").value)==="qty_desc"; const items=b.items.slice().sort((x,y)=>desc?(Number(y.qty)||0)-(Number(x.qty)||0):(Number(x.qty)||0)-(Number(y.qty)||0));
+  return '<table style="font-size:13px">'+items.map(i=>`<tr onclick="lookup('${esc(i.sku)}');showTab('scan')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}</span>${i.shared?' <span class="pill" title="This SKU is in more than one bin">also elsewhere</span>':""}${i.inactive?' <span class="muted">(not active)</span>':""}</td><td class="n">${i.qty==null?'<span class="muted">?</span>':`<b>${i.qty}</b>`}</td></tr>`).join("")+'</table>'; }
 function brBar(v,max){ const w=max?Math.max(2,Math.round(100*v/max)):0; return `<div style="height:6px;background:var(--panel2);border-radius:4px;margin-top:4px"><div style="height:6px;width:${w}%;background:var(--accent2);border-radius:4px"></div></div>`; }
 function renderBinReport(){
   if(!BR) return; const q=($("brQ").value||"").trim().toLowerCase();
@@ -910,6 +949,7 @@ function renderBinReport(){
     el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap">${esc(b.code)}</a><span class="muted" style="font-size:12px">unit ${esc(brUnitOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKUs</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")||'<div class="muted center">No bins match.</div>';
   } else {
     const rows=[]; clearUnits.forEach(u=>u.bins.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({u:u.unit,b:b.code,i}); })));
+    rows.sort(brSorter(r=>r.b,r=>Number(r.i.qty)||0));
     el.innerHTML=clear? `<div class="note" style="text-align:left;margin:0 0 10px">Everything on the ${clear} emptiest shelving units — move these into the units you're keeping, then set each item's new bin (scan it → Move). ${rows.length} lines.</div><table style="font-size:13px"><thead><tr><th>Unit</th><th>Bin</th><th>SKU / item</th><th class="n">Qty</th></tr></thead><tbody>${rows.map(r=>`<tr onclick="lookup('${esc(r.i.sku)}');showTab('scan')" style="cursor:pointer"><td class="mono">${esc(r.u)}</td><td class="mono">${esc(r.b)}</td><td><span class="mono">${esc(r.i.sku)}</span> <span class="muted">${esc(r.i.title||"")}</span>${r.i.shared?' <span class="pill">also elsewhere</span>':""}</td><td class="n">${r.i.qty==null?"?":r.i.qty}</td></tr>`).join("")}</tbody></table>`
       : '<div class="muted center">You already have this many shelving units or fewer.</div>';
   }
