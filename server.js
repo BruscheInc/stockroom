@@ -1312,6 +1312,46 @@ app.get("/api/bins", async (req, res) => {
     res.json({ bins: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Bin fill report — every bin with the items in it and their on-hand quantity (active listings, summed across stores,
+// same rule as the product view). Used to find near-empty bins and plan consolidation (e.g. 36 shelving units → 24).
+app.get("/api/bins/report", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`
+      WITH toks AS (
+        SELECT il.sku, il.title AS loc_title, trim(x) AS code_raw, lower(trim(x)) AS code
+          FROM item_location il, unnest(string_to_array(il.bin, ',')) AS x
+         WHERE il.bin IS NOT NULL AND il.bin <> ''
+      ), nb AS (SELECT sku, COUNT(*)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
+      ), q AS (
+        SELECT sku,
+               SUM(GREATEST(on_hand,0)) FILTER (WHERE upper(coalesce(status,''))='ACTIVE')::int AS act_qty,
+               SUM(GREATEST(on_hand,0))::int AS all_qty,
+               bool_or(upper(coalesce(status,''))='ACTIVE') AS has_active,
+               bool_or(on_hand IS NOT NULL) AS known,
+               max(title) AS title, max(variant) AS variant,
+               string_agg(DISTINCT brand, ',') AS brands
+          FROM stock_items GROUP BY sku
+      )
+      SELECT t.code, t.code_raw, t.sku, COALESCE(q.title, t.loc_title) AS title, q.variant, q.brands,
+             CASE WHEN q.sku IS NULL OR NOT q.known THEN NULL WHEN q.has_active THEN q.act_qty ELSE q.all_qty END AS qty,
+             (q.has_active IS NOT TRUE AND q.sku IS NOT NULL) AS inactive, nb.nbins, sv.verified_at
+        FROM toks t LEFT JOIN q ON q.sku = t.sku LEFT JOIN nb ON nb.sku = t.sku LEFT JOIN stock_verifications sv ON sv.sku = t.sku
+       WHERE t.code <> ''`);
+    const bins = {};
+    for (const b of (await db(`SELECT code, label FROM bins`)).rows) bins[String(b.code).toLowerCase()] = { code: b.code, label: b.label, items: [] };
+    for (const x of r.rows) {
+      const k = x.code; if (!bins[k]) bins[k] = { code: x.code_raw, label: null, items: [], unlisted: true };
+      bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
+    }
+    const out = Object.values(bins).map((b) => {
+      b.items.sort((a, c) => (a.qty ?? -1) - (c.qty ?? -1) || String(a.sku).localeCompare(String(c.sku)));
+      return { ...b, skus: b.items.length, units: b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0), unknown: b.items.filter((i) => i.qty == null).length, zero: b.items.filter((i) => i.qty === 0).length };
+    });
+    out.sort((a, b) => a.units - b.units || a.skus - b.skus || String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+    res.json({ bins: out, synced: (invSync && invSync.at) || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Import existing bin locations from ShipStation (warehouseLocation → app DB). Idempotent.
 app.post("/api/sync-shipstation", async (req, res) => {
   if (!guard(req, res)) return;

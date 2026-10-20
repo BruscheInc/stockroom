@@ -221,6 +221,7 @@
       <button class="btn" onclick="addBin()">Add</button>
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
+    <button class="btn ghost wide" style="margin-top:8px" onclick="showTab('binreport')">📉 Bin fill report (emptiest first)</button>
     <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
@@ -330,6 +331,29 @@
     <div class="sectlabel">Recent put-backs</div>
     <div id="strayList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-binreport" class="hidden">
+    <div class="card" style="margin-bottom:10px">
+      <div class="sectlabel" style="margin-top:0">📉 Bin fill &amp; consolidation</div>
+      <div class="note" style="text-align:left;margin:0 0 10px">Emptiest first. Quantity is Shopify on hand (active listings, all stores). Use it to clear near-empty bins and pick which shelving units to empty for the move.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label class="muted" style="font-size:13px">Shelving unit =
+          <select id="brGroup" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
+            <option value="1">1st part of bin code</option><option value="2">first 2 parts</option><option value="3">first 3 parts</option></select></label>
+        <label class="muted" style="font-size:13px">Keep <input id="brTarget" type="number" min="1" value="24" oninput="renderBinReport()" style="width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"> units</label>
+        <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="chip on" id="brVUnits" onclick="brView('units')">Shelving units</button>
+        <button class="chip" id="brVBins" onclick="brView('bins')">Bins</button>
+        <button class="chip" id="brVMove" onclick="brView('move')">Move list</button>
+        <span style="flex:1"></span>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brCsv()">⬇ CSV</button>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brPrint()">🖨️ Print</button>
+      </div>
+    </div>
+    <div id="brSum" class="card" style="display:flex;gap:16px;flex-wrap:wrap"></div>
+    <div id="brList" class="card"><div class="muted center">Loading…</div></div>
+  </section>
   <section id="tab-activity" class="hidden">
     <div class="card" style="margin-bottom:10px">
       <div class="sectlabel" style="margin-top:0">🧮 Quantity activity</div>
@@ -374,6 +398,7 @@
     <button class="menuitem" data-tab="activity" onclick="menuGo('activity')"><span class="i">🧮</span> Quantity activity</button>
     <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><span class="i">📦</span> Overstock</button>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
+    <button class="menuitem" data-tab="binreport" onclick="menuGo('binreport')"><span class="i">📉</span> Bin fill report</button>
     <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
     <div class="menusec">Actions</div>
     <button class="menuitem" onclick="closeMenu();refreshNow()"><span class="i">⟳</span> Refresh</button>
@@ -428,10 +453,11 @@ else {
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","verify","strays","activity","overstock","bins","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
+  if(t==="binreport") loadBinReport();
   if(t==="scan") setTimeout(keepFocus,50);
   if(t==="order" && !IS_TOUCH) setTimeout(()=>{ const o=$("orderScan"); if(o) o.focus(); },50);
   if(t==="verify"){ loadStockSummary(); loadStockList(); }
@@ -814,6 +840,72 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
     if(r.error){ toast(r.error,true); } else { toast(`Imported ${r.imported} + updated ${r.updated} (${r.with_location} located)`); loadBins(); }
   }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
 
+/* ---------- bin fill report: emptiest bins / shelving units first, for consolidating ---------- */
+let BR=null, BRV="units", BROPEN={};
+async function loadBinReport(){
+  $("brList").innerHTML='<div class="muted center">Loading…</div>';
+  try{ BR=await api("/api/bins/report"); if(BR.error) throw new Error(BR.error);
+    // guess the shelving-unit part of the code: A-01-3 → "A-01" (everything but the last part)
+    const parts=(BR.bins||[]).map(b=>String(b.code).split(/[-.\s_]+/).length); const common=parts.sort((a,b)=>a-b)[Math.floor(parts.length/2)]||2;
+    if(!loadBinReport._set){ $("brGroup").value=String(Math.min(3,Math.max(1,common-1))); loadBinReport._set=true; }
+    renderBinReport();
+  }catch(e){ $("brList").innerHTML='<div class="muted center">Couldn\'t load the report: '+esc(e.message)+'</div>'; }
+}
+function brView(v){ BRV=v; ["Units","Bins","Move"].forEach(k=>$("brV"+k).classList.toggle("on",k.toLowerCase()===v)); renderBinReport(); }
+function brUnitOf(code){ const n=Number($("brGroup").value)||2; const p=String(code).split(/[-.\s_]+/); return p.length<=n? p.slice(0,Math.max(1,p.length-1)).join("-")||String(code) : p.slice(0,n).join("-"); }
+function brUnits(){
+  const m={}; for(const b of BR.bins){ const u=brUnitOf(b.code); const x=m[u]||(m[u]={unit:u,bins:[],units:0,skus:0,empty:0}); x.bins.push(b); x.units+=b.units; x.skus+=b.skus; if(!b.skus) x.empty++; }
+  const list=Object.values(m); list.sort((a,b)=>a.units-b.units||a.skus-b.skus||a.unit.localeCompare(b.unit,undefined,{numeric:true}));
+  const keep=Math.max(0,Number($("brTarget").value)||0), clear=Math.max(0,list.length-keep);
+  list.forEach((u,i)=>{ u.clear=i<clear; u.bins.sort((a,b)=>a.units-b.units||String(a.code).localeCompare(String(b.code),undefined,{numeric:true})); });
+  return {list,clear};
+}
+function brMatch(b,q){ return !q || String(b.code).toLowerCase().includes(q) || b.items.some(i=>String(i.sku).toLowerCase().includes(q)||String(i.title||"").toLowerCase().includes(q)); }
+function brItems(b){ if(!b.items.length) return '<div class="muted" style="font-size:12px;padding:4px 0">Empty</div>';
+  return '<table style="font-size:13px">'+b.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}');showTab('scan')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}</span>${i.shared?' <span class="pill" title="This SKU is in more than one bin">also elsewhere</span>':""}${i.inactive?' <span class="muted">(not active)</span>':""}</td><td class="n">${i.qty==null?'<span class="muted">?</span>':`<b>${i.qty}</b>`}</td></tr>`).join("")+'</table>'; }
+function brBar(v,max){ const w=max?Math.max(2,Math.round(100*v/max)):0; return `<div style="height:6px;background:var(--panel2);border-radius:4px;margin-top:4px"><div style="height:6px;width:${w}%;background:var(--accent2);border-radius:4px"></div></div>`; }
+function renderBinReport(){
+  if(!BR) return; const q=($("brQ").value||"").trim().toLowerCase();
+  const bins=BR.bins; const {list,clear}=brUnits();
+  const emptyBins=bins.filter(b=>!b.skus).length, low=bins.filter(b=>b.skus&&b.units<=5).length, totalUnits=bins.reduce((s,b)=>s+b.units,0);
+  const clearUnits=list.filter(u=>u.clear), moveUnits=clearUnits.reduce((s,u)=>s+u.units,0), moveSkus=clearUnits.reduce((s,u)=>s+u.skus,0);
+  $("brSum").innerHTML=[[bins.length,"bins"],[emptyBins,"empty bins"],[low,"bins with 1–5 units"],[list.length,"shelving units"],[totalUnits,"units on shelves"],
+    [clear?`${clear} → ${moveSkus} SKUs · ${moveUnits} units`:"0","to empty to reach "+(Number($("brTarget").value)||0)]].map(([n,l])=>`<div><div style="font-size:20px;font-weight:800">${n}</div><div class="muted" style="font-size:12px">${l}</div></div>`).join("")
+    +(BR.synced?`<div class="muted" style="font-size:12px;align-self:flex-end;margin-left:auto">Quantities from the last Shopify sync: ${new Date(BR.synced).toLocaleString()}</div>`:"");
+  const el=$("brList");
+  if(BRV==="units"){
+    const max=Math.max(1,...list.map(u=>u.units));
+    const rows=list.filter(u=>!q||u.unit.toLowerCase().includes(q)||u.bins.some(b=>brMatch(b,q)));
+    el.innerHTML=rows.map(u=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px">
+      <div onclick="BROPEN['${esc(u.unit)}']=!BROPEN['${esc(u.unit)}'];renderBinReport()" style="cursor:pointer;display:flex;gap:10px;align-items:center">
+        <span class="pill bin" style="white-space:nowrap">${esc(u.unit)}</span>${u.clear?'<span class="pill" style="white-space:nowrap;background:rgba(255,180,84,.16);color:var(--warn);border:1px solid rgba(255,180,84,.4)">Empty this unit</span>':""}
+        <span style="flex:1"></span><span class="muted" style="font-size:13px;text-align:right">${u.bins.length-u.empty}/${u.bins.length} bins used · ${u.skus} SKUs</span><b style="min-width:54px;text-align:right">${u.units}</b></div>
+      ${brBar(u.units,max)}
+      ${BROPEN[u.unit]||q?u.bins.filter(b=>brMatch(b,q)).map(b=>`<div style="margin:8px 0 0 12px"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="mono" style="cursor:pointer;color:var(--accent2)">${esc(b.code)}</a> <span class="muted" style="font-size:12px">${b.skus} SKUs · ${b.units} units</span>${brItems(b)}</div>`).join(""):""}
+    </div>`).join("")||'<div class="muted center">No bins.</div>';
+  } else if(BRV==="bins"){
+    const max=Math.max(1,...bins.map(b=>b.units));
+    const rows=bins.filter(b=>brMatch(b,q)).slice(0,600);
+    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap">${esc(b.code)}</a><span class="muted" style="font-size:12px">unit ${esc(brUnitOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKUs</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")||'<div class="muted center">No bins match.</div>';
+  } else {
+    const rows=[]; clearUnits.forEach(u=>u.bins.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({u:u.unit,b:b.code,i}); })));
+    el.innerHTML=clear? `<div class="note" style="text-align:left;margin:0 0 10px">Everything on the ${clear} emptiest shelving units — move these into the units you're keeping, then set each item's new bin (scan it → Move). ${rows.length} lines.</div><table style="font-size:13px"><thead><tr><th>Unit</th><th>Bin</th><th>SKU / item</th><th class="n">Qty</th></tr></thead><tbody>${rows.map(r=>`<tr onclick="lookup('${esc(r.i.sku)}');showTab('scan')" style="cursor:pointer"><td class="mono">${esc(r.u)}</td><td class="mono">${esc(r.b)}</td><td><span class="mono">${esc(r.i.sku)}</span> <span class="muted">${esc(r.i.title||"")}</span>${r.i.shared?' <span class="pill">also elsewhere</span>':""}</td><td class="n">${r.i.qty==null?"?":r.i.qty}</td></tr>`).join("")}</tbody></table>`
+      : '<div class="muted center">You already have this many shelving units or fewer.</div>';
+  }
+}
+function brPrint(){
+  const pa=$("printArea"); if(!pa) return window.print();
+  const view={units:"Shelving units, emptiest first",bins:"Bins, emptiest first",move:"Move list — units to empty"}[BRV];
+  pa.innerHTML=`<h2 style="margin:0 0 4px">Bin fill report · ${view}</h2><div style="font-size:12px;margin-bottom:12px">${new Date().toLocaleString()} · keep ${esc($("brTarget").value)} shelving units</div><div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px">${$("brSum").innerHTML}</div><div style="font-size:12px">${$("brList").innerHTML}</div>`;
+  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.innerHTML=""; },500); },50);
+}
+function brCsv(){
+  if(!BR) return; const {list}=brUnits(); const cell=(v)=>{ v=v==null?"":String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const lines=[["Shelving unit","Empty this unit","Bin","Bin SKUs","Bin units","SKU","Item","Variant","Qty on hand","Also in another bin","Last verified"].join(",")];
+  for(const u of list) for(const b of u.bins){ if(!b.items.length) lines.push([u.unit,u.clear?"yes":"",b.code,0,0,"","","","","",""].map(cell).join(","));
+    for(const i of b.items) lines.push([u.unit,u.clear?"yes":"",b.code,b.skus,b.units,i.sku,i.title,i.variant,i.qty,i.shared?"yes":"",i.verified_at?new Date(i.verified_at).toLocaleDateString():""].map(cell).join(",")); }
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="bin-fill-report-"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+}
 /* ---------- search tab: product NAME / SKU search across all stores, with filters + sort ---------- */
 let searchT=null, findItems=[];
 function toggleChip(el){ el.classList.toggle("on"); renderFind(); }
