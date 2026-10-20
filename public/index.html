@@ -337,8 +337,7 @@
       <div class="note" style="text-align:left;margin:0 0 10px">Emptiest first. Quantity is Shopify on hand (active listings, all stores). Use it to clear near-empty bins and pick which shelving units to empty for the move.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="muted" style="font-size:13px">Shelving unit =
-          <select id="brGroup" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
-            <option value="1">1st part of bin code</option><option value="2">first 2 parts</option><option value="3">first 3 parts</option></select></label>
+          <select id="brGroup" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"></select></label>
         <label class="muted" style="font-size:13px">Keep <input id="brTarget" type="number" min="1" value="24" oninput="renderBinReport()" style="width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"> units</label>
         <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
@@ -845,14 +844,23 @@ let BR=null, BRV="units", BROPEN={};
 async function loadBinReport(){
   $("brList").innerHTML='<div class="muted center">Loading…</div>';
   try{ BR=await api("/api/bins/report"); if(BR.error) throw new Error(BR.error);
-    // guess the shelving-unit part of the code: A-01-3 → "A-01" (everything but the last part)
-    const parts=(BR.bins||[]).map(b=>String(b.code).split(/[-.\s_]+/).length); const common=parts.sort((a,b)=>a-b)[Math.floor(parts.length/2)]||2;
-    if(!loadBinReport._set){ $("brGroup").value=String(Math.min(3,Math.max(1,common-1))); loadBinReport._set=true; }
+    // Grouping choices, shown with a real bin code so it's clear what each one does (e.g. 210-L → "210-L", "210", "21", "2").
+    if(!loadBinReport._set){
+      const ex=(BR.bins.find(b=>/^\d+\D/.test(String(b.code)))||BR.bins.find(b=>b.skus)||BR.bins[0]||{code:"210-L"}).code;
+      const opts=[["bin","Each bin on its own"],["num","Bin number without the letter"],["d2","First 2 digits"],["d1","First digit"],["p1","Text before the first dash"]];
+      $("brGroup").innerHTML=opts.map(([v,l])=>`<option value="${v}">${l} (${esc(ex)} → ${esc(brUnitOf(ex,v))})</option>`).join("");
+      $("brGroup").value="num"; loadBinReport._set=true;
+    }
     renderBinReport();
   }catch(e){ $("brList").innerHTML='<div class="muted center">Couldn\'t load the report: '+esc(e.message)+'</div>'; }
 }
 function brView(v){ BRV=v; ["Units","Bins","Move"].forEach(k=>$("brV"+k).classList.toggle("on",k.toLowerCase()===v)); renderBinReport(); }
-function brUnitOf(code){ const n=Number($("brGroup").value)||2; const p=String(code).split(/[-.\s_]+/); return p.length<=n? p.slice(0,Math.max(1,p.length-1)).join("-")||String(code) : p.slice(0,n).join("-"); }
+function brUnitOf(code,mode){ mode=mode||$("brGroup").value||"num"; const c=String(code).trim(); const num=(c.match(/^\d+/)||[""])[0];
+  if(mode==="bin") return c;
+  if(mode==="num") return num || c.replace(/[-\s]*[A-Za-z]+$/,"") || c;
+  if(mode==="d2") return num ? num.slice(0,2) : c;
+  if(mode==="d1") return num ? num.slice(0,1) : c;
+  return c.split(/[-.\s_]+/)[0] || c; }
 function brUnits(){
   const m={}; for(const b of BR.bins){ const u=brUnitOf(b.code); const x=m[u]||(m[u]={unit:u,bins:[],units:0,skus:0,empty:0}); x.bins.push(b); x.units+=b.units; x.skus+=b.skus; if(!b.skus) x.empty++; }
   const list=Object.values(m); list.sort((a,b)=>a.units-b.units||a.skus-b.skus||a.unit.localeCompare(b.unit,undefined,{numeric:true}));
@@ -878,9 +886,10 @@ function renderBinReport(){
     const rows=list.filter(u=>!q||u.unit.toLowerCase().includes(q)||u.bins.some(b=>brMatch(b,q)));
     el.innerHTML=rows.map(u=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px">
       <div onclick="BROPEN['${esc(u.unit)}']=!BROPEN['${esc(u.unit)}'];renderBinReport()" style="cursor:pointer;display:flex;gap:10px;align-items:center">
-        <span class="pill bin" style="white-space:nowrap">${esc(u.unit)}</span>${u.clear?'<span class="pill" style="white-space:nowrap;background:rgba(255,180,84,.16);color:var(--warn);border:1px solid rgba(255,180,84,.4)">Empty this unit</span>':""}
+        <span class="pill bin" style="white-space:nowrap">${$("brGroup").value==="bin"?"":"Unit "}${esc(u.unit)}</span>${u.clear?'<span class="pill" style="white-space:nowrap;background:rgba(255,180,84,.16);color:var(--warn);border:1px solid rgba(255,180,84,.4)">Empty this unit</span>':""}
         <span style="flex:1"></span><span class="muted" style="font-size:13px;text-align:right">${u.bins.length-u.empty}/${u.bins.length} bins used · ${u.skus} SKUs</span><b style="min-width:54px;text-align:right">${u.units}</b></div>
       ${brBar(u.units,max)}
+      ${$("brGroup").value!=="bin"?`<div class="mono muted" style="font-size:12px;margin-top:5px">Bins: ${u.bins.map(b=>esc(b.code)+(b.skus?"":" (empty)")).join(" · ")}</div>`:""}
       ${BROPEN[u.unit]||q?u.bins.filter(b=>brMatch(b,q)).map(b=>`<div style="margin:8px 0 0 12px"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="mono" style="cursor:pointer;color:var(--accent2)">${esc(b.code)}</a> <span class="muted" style="font-size:12px">${b.skus} SKUs · ${b.units} units</span>${brItems(b)}</div>`).join(""):""}
     </div>`).join("")||'<div class="muted center">No bins.</div>';
   } else if(BRV==="bins"){
