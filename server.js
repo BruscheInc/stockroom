@@ -89,6 +89,11 @@ async function migrate() {
                regexp_replace(upper(trim(coalesce(t, ''))), '[[:space:]]*-[[:space:]]*', '-', 'g'),
              '^([A-Z]+)[[:space:]]*([0-9]+)$', '\\1-\\2'), '^([0-9]+)[[:space:]]*([A-Z]+)$', '\\1-\\2'),
            '(^|-)0+([0-9])', '\\1\\2', 'g') $$`);
+  // The bin's identity: location letters + number, whichever side they're written on (R-35 = 35-R = R35).
+  await db(`CREATE OR REPLACE FUNCTION bin_key(t TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE WHEN c ~ '^[A-Z]+-[0-9]+$' THEN substring(c from '^([A-Z]+)') || '|' || substring(c from '([0-9]+)$')
+                WHEN c ~ '^[0-9]+-[A-Z]+$' THEN substring(c from '([A-Z]+)$') || '|' || substring(c from '^([0-9]+)')
+                ELSE c END FROM (SELECT bin_canon(t) AS c) s $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
   // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
   await db(`CREATE TABLE IF NOT EXISTS stock_items (
@@ -679,7 +684,7 @@ async function binItems(code) {
   const r = await db(
     `SELECT il.sku,il.bin,il.title,il.barcode,il.updated_at,il.updated_by,sv.verified_at,sv.verified_by
        FROM item_location il LEFT JOIN stock_verifications sv ON sv.sku = il.sku
-     WHERE bin_canon($1) = ANY(SELECT bin_canon(x) FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x) ORDER BY il.sku`,
+     WHERE bin_key($1) = ANY(SELECT bin_key(x) FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x) ORDER BY il.sku`,
     [code]
   );
   return r.rows;
@@ -868,7 +873,7 @@ async function resolveCode(raw) {
   if (!code) return { type: "empty" };
   // 1) explicit bin QR (app-generated labels use the BIN- prefix), or a known bin code.
   const binGuess = code.replace(/^BIN[-:]/i, "");
-  const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_canon(code)=bin_canon($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
+  const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
   if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
     const bin = knownBin.rows[0]?.code || binGuess;
     return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items: await binItems(bin) };
@@ -1266,7 +1271,7 @@ app.get("/api/item/:sku", async (req, res) => {
 app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_canon(code)=bin_canon($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
+    const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
     res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items: await binItems(req.params.code) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1322,12 +1327,22 @@ app.get("/api/bins", async (req, res) => {
 });
 // Bin fill report — every bin with the items in it and their on-hand quantity (active listings, summed across stores,
 // same rule as the product view). Used to find near-empty bins and plan consolidation (e.g. 36 shelving units → 24).
+// Which side of the number each warehouse location is written on. Anything else is an old / phased-out location.
+const LOC_BEFORE = ["Q", "S", "R", "D", "E", "A", "C", "F", "G", "I", "J", "RS"];
+const LOC_AFTER = ["T", "L", "B", "U", "UW"];
+function binShape(key, fallback) {
+  const m = String(key).match(/^([A-Z]+)\|(\d+)$/);
+  if (!m) return { code: fallback || key, loc: null, num: null, known: false };
+  const [, loc, num] = m;
+  const after = LOC_AFTER.includes(loc);
+  return { code: after ? `${num}-${loc}` : `${loc}-${num}`, loc, num: Number(num), known: after || LOC_BEFORE.includes(loc) };
+}
 app.get("/api/bins/report", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const r = await db(`
       WITH toks AS (
-        SELECT il.sku, il.title AS loc_title, bin_canon(x) AS code_raw, bin_canon(x) AS code
+        SELECT il.sku, il.title AS loc_title, bin_canon(x) AS code_raw, bin_key(x) AS code
           FROM item_location il, unnest(regexp_split_to_array(il.bin, '[,;/|]')) AS x
          WHERE il.bin IS NOT NULL AND il.bin <> '' AND trim(x) <> ''
       ), nb AS (SELECT sku, COUNT(DISTINCT code)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
@@ -1347,12 +1362,12 @@ app.get("/api/bins/report", async (req, res) => {
         FROM toks t LEFT JOIN q ON q.sku = t.sku LEFT JOIN nb ON nb.sku = t.sku LEFT JOIN stock_verifications sv ON sv.sku = t.sku
        WHERE t.code <> ''`);
     const bins = {};
-    // Small spelling differences (s-25, S-025) are the same bin, shown as S-25. S-25 and 25-S stay separate bins.
-    for (const b of (await db(`SELECT bin_canon(code) AS code, label, code AS raw FROM bins`)).rows) { const k = b.code; if (!k) continue; if (!bins[k]) bins[k] = { code: b.code, label: b.label && b.label !== b.raw ? b.label : null, items: [] }; }
+    // One bin per location + number, written the house way (R-35, 35-T), however it was typed.
+    for (const b of (await db(`SELECT bin_key(code) AS k, bin_canon(code) AS c, label, code AS raw FROM bins`)).rows) { if (!b.k) continue; if (!bins[b.k]) bins[b.k] = { ...binShape(b.k, b.c), label: b.label && b.label !== b.raw ? b.label : null, items: [] }; }
     const seen = new Set();
     for (const x of r.rows) {
       const k = x.code; if (seen.has(k + "|" + x.sku)) continue; seen.add(k + "|" + x.sku);
-      if (!bins[k]) bins[k] = { code: x.code_raw, label: null, items: [], unlisted: true };
+      if (!bins[k]) bins[k] = { ...binShape(k, x.code_raw), label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
     }
     const out = Object.values(bins).map((b) => {
@@ -1360,7 +1375,7 @@ app.get("/api/bins/report", async (req, res) => {
       return { ...b, skus: b.items.length, units: b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0), unknown: b.items.filter((i) => i.qty == null).length, zero: b.items.filter((i) => i.qty === 0).length };
     });
     out.sort((a, b) => a.units - b.units || a.skus - b.skus || String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
-    res.json({ bins: out, synced: (invSync && invSync.at) || null });
+    res.json({ bins: out, locations: [...LOC_BEFORE, ...LOC_AFTER].sort(), synced: (invSync && invSync.at) || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Import existing bin locations from ShipStation (warehouseLocation → app DB). Idempotent.

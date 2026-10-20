@@ -869,27 +869,31 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
 
 /* ---------- bin fill report: every bin, emptiest first, for condensing ---------- */
 let BR=null, BRV="bins", BRL=new Set(), BRN=300;
-// The location is the letters at the start (S-25) or at the end (534-L) of a bin code. Locations can be several letters.
-function brLetterOf(code){ const c=String(code).trim(); const m=c.match(/^[A-Za-z]+/)||c.match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "—"; }
-function brNumOf(code){ const m=String(code).match(/\d+/); return m? String(Number(m[0])) : String(code); }
+// Location comes from the server (R-35 → R, 35-T → T). Only the current warehouse locations get a filter;
+// old ones are grouped under "Other" and left out of "All".
+function brLetterOf(code){ if(code&&typeof code==="object") return code.known?code.loc:"OTHER"; const c=String(code).trim(); const m=c.match(/^[A-Za-z]+/)||c.match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "OTHER"; }
+function brNumOf(code){ if(code&&typeof code==="object") return code.num==null?"":String(code.num); const m=String(code).match(/\d+/); return m? String(Number(m[0])) : String(code); }
+function brLoc(b){ return b.known? b.loc : "OTHER"; }
 function brLetterChips(){
-  const n={}; for(const b of BR.bins){ const l=brLetterOf(b.code); n[l]=(n[l]||0)+1; }
-  const keys=Object.keys(n).sort((a,b)=>a==="—"?1:b==="—"?-1:a.localeCompare(b));
+  const n={}; for(const b of BR.bins){ const l=brLoc(b); n[l]=(n[l]||0)+1; }
+  const keys=(BR.locations||[]).filter(k=>n[k]);
   $("brLetters").innerHTML='<span class="muted" style="font-size:13px">Location:</span>'
-    +`<button class="chip${BRL.size?"":" on"}" onclick="BRL.clear();brLetterChips();renderBinReport()">All</button>`
-    +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${k==="—"?"No location":esc(k)} <span class="muted">${n[k]}</span></button>`).join("");
+    +`<button class="chip${BRL.size?"":" on"}" onclick="BRL.clear();BRN=300;brLetterChips();renderBinReport()">All</button>`
+    +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${esc(k)} <span class="muted">${n[k]}</span></button>`).join("")
+    +(n.OTHER?`<button class="chip${BRL.has("OTHER")?" on":""}" onclick="brToggleLetter('OTHER')" title="Old locations and bins without a location">Other <span class="muted">${n.OTHER}</span></button>`:"");
 }
 function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); BRN=300; brLetterChips(); renderBinReport(); }
-// Bin order: by location, then bin number (S-1, S-2 … S-57), whichever end the location is written on.
-function brCmpCode(a,b){ const la=brLetterOf(a), lb=brLetterOf(b); if(la!==lb) return la==="—"?1:lb==="—"?-1:la.localeCompare(lb);
-  const na=Number(brNumOf(a)), nb=Number(brNumOf(b)); if(na!==nb&&!isNaN(na)&&!isNaN(nb)) return na-nb;
-  return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:"base"}); }
+// Bin order: by location, then bin number (R-1, R-2 … R-57), whichever side the letters are written on.
+function brCmpBin(a,b){ const la=brLoc(a), lb=brLoc(b); if(la!==lb) return la==="OTHER"?1:lb==="OTHER"?-1:la.localeCompare(lb);
+  if(a.num!=null&&b.num!=null&&a.num!==b.num) return a.num-b.num;
+  return String(a.code).localeCompare(String(b.code),undefined,{numeric:true,sensitivity:"base"}); }
+const brCmpCode=(a,b)=>brCmpBin(a,b);
 function brSorter(codeOf,qtyOf){ const m=($("brSort")&&$("brSort").value)||"qty_asc";
   if(m==="bin_asc") return (a,b)=>brCmpCode(codeOf(a),codeOf(b));
   if(m==="bin_desc") return (a,b)=>brCmpCode(codeOf(b),codeOf(a));
   if(m==="qty_desc") return (a,b)=>qtyOf(b)-qtyOf(a)||brCmpCode(codeOf(a),codeOf(b));
   return (a,b)=>qtyOf(a)-qtyOf(b)||brCmpCode(codeOf(a),codeOf(b)); }
-function brBins(){ const l=BRL.size? BR.bins.filter(b=>BRL.has(brLetterOf(b.code))) : BR.bins.slice(); return l.sort(brSorter(b=>b.code,b=>b.units)); }
+function brBins(){ const l=BRL.size? BR.bins.filter(b=>BRL.has(brLoc(b))) : BR.bins.filter(b=>b.known); return l.sort(brSorter(b=>b,b=>b.units)); }
 async function loadBinReport(force){
   // Coming back to the report (swipe back from an item) shows it instantly, same filters and scroll.
   if(!force && BR && BR._at && Date.now()-BR._at<5*60*1000){ brLetterChips(); renderBinReport(); return; }
@@ -905,7 +909,7 @@ function brItems(b){ if(!b.items.length) return '<div class="muted" style="font-
   return '<table style="font-size:13px">'+items.map(i=>`<tr onclick="lookup('${esc(i.sku)}');showTab('scan')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}</span>${i.shared?' <span class="pill" title="This SKU is in more than one bin">also elsewhere</span>':""}${i.inactive?' <span class="muted">(not active)</span>':""}</td><td class="n">${i.qty==null?'<span class="muted">?</span>':`<b>${i.qty}</b>`}</td></tr>`).join("")+'</table>'; }
 function brBar(v,max){ const w=max?Math.max(2,Math.round(100*v/max)):0; return `<div style="height:6px;background:var(--panel2);border-radius:4px;margin-top:4px"><div style="height:6px;width:${w}%;background:var(--accent2);border-radius:4px"></div></div>`; }
 // The emptiest bins that still hold something — what to pull first when condensing.
-function brMoveBins(){ const n=Math.max(1,Number($("brMoveN").value)||20); return (BRL.size? BR.bins.filter(b=>BRL.has(brLetterOf(b.code))) : BR.bins).filter(b=>b.skus).slice().sort((a,b)=>a.units-b.units||brCmpCode(a.code,b.code)).slice(0,n); }
+function brMoveBins(){ const n=Math.max(1,Number($("brMoveN").value)||20); return (BRL.size? BR.bins.filter(b=>BRL.has(brLoc(b))) : BR.bins.filter(b=>b.known)).filter(b=>b.skus).slice().sort((a,b)=>a.units-b.units||brCmpBin(a,b)).slice(0,n); }
 function renderBinReport(){
   if(!BR) return; const q=($("brQ").value||"").trim().toLowerCase();
   const bins=brBins();
@@ -916,11 +920,11 @@ function renderBinReport(){
   if(BRV==="bins"){
     const max=Math.max(1,...bins.map(b=>b.units));
     const all=bins.filter(b=>brMatch(b,q)); const rows=all.slice(0,BRN);
-    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">location ${esc(brLetterOf(b.code))} · bin ${esc(brNumOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
+    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">${b.known?`location ${esc(b.loc)} · bin ${esc(b.num)}`:"old / no location"}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
       +(all.length>rows.length?`<div id="brMore" class="muted center" style="padding:14px">Showing ${rows.length} of ${all.length} bins — <a style="color:var(--accent2);cursor:pointer" onclick="BRN+=300;renderBinReport()">show more</a></div>`:`<div class="muted center" style="padding:12px;font-size:12px">All ${all.length} bins shown</div>`)||'<div class="muted center">No bins match.</div>';
   } else {
-    const mb=brMoveBins(); const rows=[]; mb.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({b:b.code,i}); }));
-    rows.sort(brSorter(r=>r.b,r=>Number(r.i.qty)||0));
+    const mb=brMoveBins(); const rows=[]; mb.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({b:b.code,bin:b,i}); }));
+    rows.sort(brSorter(r=>r.bin,r=>Number(r.i.qty)||0));
     el.innerHTML=mb.length? `<div class="note" style="text-align:left;margin:0 0 10px">${mb.length} emptiest bins · ${rows.length} items · ${mb.reduce((s,b)=>s+b.units,0)} units. Move these into fuller bins, then scan each item → Move to set its new bin.</div><table style="font-size:13px"><thead><tr><th>Bin</th><th>SKU / item</th><th class="n">Qty</th></tr></thead><tbody>${rows.map(r=>`<tr onclick="lookup('${esc(r.i.sku)}');showTab('scan')" style="cursor:pointer"><td class="mono" style="white-space:nowrap">${esc(r.b)}</td><td><span class="mono">${esc(r.i.sku)}</span> <span class="muted">${esc(r.i.title||"")}</span>${r.i.shared?' <span class="pill">also elsewhere</span>':""}</td><td class="n">${r.i.qty==null?"?":r.i.qty}</td></tr>`).join("")}</tbody></table>`
       : '<div class="muted center">No bins with items.</div>';
   }
@@ -935,8 +939,8 @@ function brPrint(){
 function brCsv(){
   if(!BR) return; const cell=(v)=>{ v=v==null?"":String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const lines=[["Bin","Location","Bin number","Bin SKUs","Bin units","SKU","Item","Variant","Qty on hand","Also in another bin","Last verified"].join(",")];
-  for(const b of brBins()){ if(!b.items.length) lines.push([b.code,brLetterOf(b.code),brNumOf(b.code),0,0,"","","","","",""].map(cell).join(","));
-    for(const i of b.items) lines.push([b.code,brLetterOf(b.code),brNumOf(b.code),b.skus,b.units,i.sku,i.title,i.variant,i.qty,i.shared?"yes":"",i.verified_at?new Date(i.verified_at).toLocaleDateString():""].map(cell).join(",")); }
+  for(const b of brBins()){ if(!b.items.length) lines.push([b.code,b.known?b.loc:"Other",b.num??"",0,0,"","","","","",""].map(cell).join(","));
+    for(const i of b.items) lines.push([b.code,b.known?b.loc:"Other",b.num??"",b.skus,b.units,i.sku,i.title,i.variant,i.qty,i.shared?"yes":"",i.verified_at?new Date(i.verified_at).toLocaleDateString():""].map(cell).join(",")); }
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="bin-fill-report-"+new Date().toISOString().slice(0,10)+".csv"; a.click();
 }
 /* ---------- search tab: product NAME / SKU search across all stores, with filters + sort ---------- */
