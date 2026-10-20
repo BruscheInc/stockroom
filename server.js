@@ -1319,7 +1319,7 @@ app.get("/api/bins/report", async (req, res) => {
   try {
     const r = await db(`
       WITH toks AS (
-        SELECT il.sku, il.title AS loc_title, trim(x) AS code_raw, lower(trim(x)) AS code
+        SELECT il.sku, il.title AS loc_title, regexp_replace(trim(x), '^0+(?=[0-9])', '') AS code_raw, lower(regexp_replace(trim(x), '^0+(?=[0-9])', '')) AS code
           FROM item_location il, unnest(string_to_array(il.bin, ',')) AS x
          WHERE il.bin IS NOT NULL AND il.bin <> ''
       ), nb AS (SELECT sku, COUNT(*)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
@@ -1339,7 +1339,9 @@ app.get("/api/bins/report", async (req, res) => {
         FROM toks t LEFT JOIN q ON q.sku = t.sku LEFT JOIN nb ON nb.sku = t.sku LEFT JOIN stock_verifications sv ON sv.sku = t.sku
        WHERE t.code <> ''`);
     const bins = {};
-    for (const b of (await db(`SELECT code, label FROM bins`)).rows) bins[String(b.code).toLowerCase()] = { code: b.code, label: b.label, items: [] };
+    // Leading zeros aren't part of a bin number (0210-L is 210-L), so they're dropped and such bins merged.
+    const noZero = (c) => String(c || "").trim().replace(/^0+(?=\d)/, "");
+    for (const b of (await db(`SELECT code, label FROM bins`)).rows) { const c = noZero(b.code); const k = c.toLowerCase(); if (!bins[k]) bins[k] = { code: c, label: b.label && b.label !== b.code ? b.label : null, items: [] }; }
     for (const x of r.rows) {
       const k = x.code; if (!bins[k]) bins[k] = { code: x.code_raw, label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
