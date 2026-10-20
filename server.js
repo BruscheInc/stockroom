@@ -81,6 +81,9 @@ async function migrate() {
     ts TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_hist_sku ON location_history(sku, ts DESC)`);
+  // Bins are kept as written (S-25 and 534-L are both real formats). Only case, spaces and leading zeros are tidied: "s - 025" is S-25.
+  await db(`CREATE OR REPLACE FUNCTION bin_canon(t TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+    SELECT regexp_replace(regexp_replace(upper(trim(coalesce(t, ''))), '[[:space:]]*-[[:space:]]*', '-', 'g'), '(^|-)0+([0-9])', '\\1\\2', 'g') $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
   // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
   await db(`CREATE TABLE IF NOT EXISTS stock_items (
@@ -671,7 +674,7 @@ async function binItems(code) {
   const r = await db(
     `SELECT il.sku,il.bin,il.title,il.barcode,il.updated_at,il.updated_by,sv.verified_at,sv.verified_by
        FROM item_location il LEFT JOIN stock_verifications sv ON sv.sku = il.sku
-     WHERE lower($1) = ANY(SELECT trim(lower(x)) FROM unnest(string_to_array(il.bin, ',')) x) ORDER BY il.sku`,
+     WHERE bin_canon($1) = ANY(SELECT bin_canon(x) FROM unnest(string_to_array(il.bin, ',')) x) ORDER BY il.sku`,
     [code]
   );
   return r.rows;
@@ -860,7 +863,7 @@ async function resolveCode(raw) {
   if (!code) return { type: "empty" };
   // 1) explicit bin QR (app-generated labels use the BIN- prefix), or a known bin code.
   const binGuess = code.replace(/^BIN[-:]/i, "");
-  const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1)`, [binGuess]);
+  const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_canon(code)=bin_canon($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
   if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
     const bin = knownBin.rows[0]?.code || binGuess;
     return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items: await binItems(bin) };
@@ -1258,7 +1261,7 @@ app.get("/api/item/:sku", async (req, res) => {
 app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;
   try {
-    const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1)`, [req.params.code]);
+    const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_canon(code)=bin_canon($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
     res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items: await binItems(req.params.code) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1319,10 +1322,10 @@ app.get("/api/bins/report", async (req, res) => {
   try {
     const r = await db(`
       WITH toks AS (
-        SELECT il.sku, il.title AS loc_title, regexp_replace(trim(x), '^0+(?=[0-9])', '') AS code_raw, lower(regexp_replace(trim(x), '^0+(?=[0-9])', '')) AS code
+        SELECT il.sku, il.title AS loc_title, bin_canon(x) AS code_raw, bin_canon(x) AS code
           FROM item_location il, unnest(string_to_array(il.bin, ',')) AS x
          WHERE il.bin IS NOT NULL AND il.bin <> ''
-      ), nb AS (SELECT sku, COUNT(*)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
+      ), nb AS (SELECT sku, COUNT(DISTINCT code)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
       ), q AS (
         SELECT sku,
                SUM(GREATEST(on_hand,0)) FILTER (WHERE upper(coalesce(status,''))='ACTIVE')::int AS act_qty,
@@ -1339,11 +1342,12 @@ app.get("/api/bins/report", async (req, res) => {
         FROM toks t LEFT JOIN q ON q.sku = t.sku LEFT JOIN nb ON nb.sku = t.sku LEFT JOIN stock_verifications sv ON sv.sku = t.sku
        WHERE t.code <> ''`);
     const bins = {};
-    // Leading zeros aren't part of a bin number (0210-L is 210-L), so they're dropped and such bins merged.
-    const noZero = (c) => String(c || "").trim().replace(/^0+(?=\d)/, "");
-    for (const b of (await db(`SELECT code, label FROM bins`)).rows) { const c = noZero(b.code); const k = c.toLowerCase(); if (!bins[k]) bins[k] = { code: c, label: b.label && b.label !== b.code ? b.label : null, items: [] }; }
+    // Small spelling differences (s-25, S-025) are the same bin, shown as S-25. S-25 and 25-S stay separate bins.
+    for (const b of (await db(`SELECT bin_canon(code) AS code, label, code AS raw FROM bins`)).rows) { const k = b.code; if (!k) continue; if (!bins[k]) bins[k] = { code: b.code, label: b.label && b.label !== b.raw ? b.label : null, items: [] }; }
+    const seen = new Set();
     for (const x of r.rows) {
-      const k = x.code; if (!bins[k]) bins[k] = { code: x.code_raw, label: null, items: [], unlisted: true };
+      const k = x.code; if (seen.has(k + "|" + x.sku)) continue; seen.add(k + "|" + x.sku);
+      if (!bins[k]) bins[k] = { code: x.code_raw, label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
     }
     const out = Object.values(bins).map((b) => {

@@ -869,8 +869,9 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
 
 /* ---------- bin fill report: every bin, emptiest first, for condensing ---------- */
 let BR=null, BRV="bins", BRL=new Set();
-// Bin codes are <bin number>-<warehouse location>: 534-L is bin 534 in location L. Locations can be several letters.
-function brLetterOf(code){ const m=String(code).trim().match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "—"; }
+// The location is the letters at the start (S-25) or at the end (534-L) of a bin code. Locations can be several letters.
+function brLetterOf(code){ const c=String(code).trim(); const m=c.match(/^[A-Za-z]+/)||c.match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "—"; }
+function brNumOf(code){ const m=String(code).match(/\d+/); return m? String(Number(m[0])) : String(code); }
 function brLetterChips(){
   const n={}; for(const b of BR.bins){ const l=brLetterOf(b.code); n[l]=(n[l]||0)+1; }
   const keys=Object.keys(n).sort((a,b)=>a==="—"?1:b==="—"?-1:a.localeCompare(b));
@@ -879,7 +880,10 @@ function brLetterChips(){
     +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${k==="—"?"No location":esc(k)} <span class="muted">${n[k]}</span></button>`).join("");
 }
 function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); brLetterChips(); renderBinReport(); }
-function brCmpCode(a,b){ return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:"base"}); }
+// Bin order: by location, then bin number (S-1, S-2 … S-57), whichever end the location is written on.
+function brCmpCode(a,b){ const la=brLetterOf(a), lb=brLetterOf(b); if(la!==lb) return la==="—"?1:lb==="—"?-1:la.localeCompare(lb);
+  const na=Number(brNumOf(a)), nb=Number(brNumOf(b)); if(na!==nb&&!isNaN(na)&&!isNaN(nb)) return na-nb;
+  return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:"base"}); }
 function brSorter(codeOf,qtyOf){ const m=($("brSort")&&$("brSort").value)||"qty_asc";
   if(m==="bin_asc") return (a,b)=>brCmpCode(codeOf(a),codeOf(b));
   if(m==="bin_desc") return (a,b)=>brCmpCode(codeOf(b),codeOf(a));
@@ -911,7 +915,7 @@ function renderBinReport(){
   if(BRV==="bins"){
     const max=Math.max(1,...bins.map(b=>b.units));
     const rows=bins.filter(b=>brMatch(b,q)).slice(0,800);
-    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">bin ${esc(String(b.code).replace(/[-\s]*[A-Za-z]+$/,""))} · location ${esc(brLetterOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
+    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">location ${esc(brLetterOf(b.code))} · bin ${esc(brNumOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
       +(bins.filter(b=>brMatch(b,q)).length>800?'<div class="muted center" style="padding:12px">Showing 800 — filter by letter or search to narrow down.</div>':"")||'<div class="muted center">No bins match.</div>';
   } else {
     const mb=brMoveBins(); const rows=[]; mb.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({b:b.code,i}); }));
@@ -928,9 +932,9 @@ function brPrint(){
 }
 function brCsv(){
   if(!BR) return; const cell=(v)=>{ v=v==null?"":String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
-  const lines=[["Bin","Bin number","Location","Bin SKUs","Bin units","SKU","Item","Variant","Qty on hand","Also in another bin","Last verified"].join(",")];
-  for(const b of brBins()){ if(!b.items.length) lines.push([b.code,String(b.code).replace(/[-\s]*[A-Za-z]+$/,""),brLetterOf(b.code),0,0,"","","","","",""].map(cell).join(","));
-    for(const i of b.items) lines.push([b.code,String(b.code).replace(/[-\s]*[A-Za-z]+$/,""),brLetterOf(b.code),b.skus,b.units,i.sku,i.title,i.variant,i.qty,i.shared?"yes":"",i.verified_at?new Date(i.verified_at).toLocaleDateString():""].map(cell).join(",")); }
+  const lines=[["Bin","Location","Bin number","Bin SKUs","Bin units","SKU","Item","Variant","Qty on hand","Also in another bin","Last verified"].join(",")];
+  for(const b of brBins()){ if(!b.items.length) lines.push([b.code,brLetterOf(b.code),brNumOf(b.code),0,0,"","","","","",""].map(cell).join(","));
+    for(const i of b.items) lines.push([b.code,brLetterOf(b.code),brNumOf(b.code),b.skus,b.units,i.sku,i.title,i.variant,i.qty,i.shared?"yes":"",i.verified_at?new Date(i.verified_at).toLocaleDateString():""].map(cell).join(",")); }
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="bin-fill-report-"+new Date().toISOString().slice(0,10)+".csv"; a.click();
 }
 /* ---------- search tab: product NAME / SKU search across all stores, with filters + sort ---------- */
