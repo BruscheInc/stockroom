@@ -337,7 +337,7 @@
       <div class="note" style="text-align:left;margin:0 0 10px">Emptiest first. Quantity is Shopify on hand (active listings, all stores). Use it to clear near-empty bins and pick which shelving units to empty for the move.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="muted" style="font-size:13px">Shelving unit =
-          <select id="brGroup" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"></select></label>
+          <select id="brGroup" onchange="try{localStorage.setItem('br_group',this.value)}catch(_){};renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"></select></label>
         <label class="muted" style="font-size:13px">Keep <input id="brTarget" type="number" min="1" value="24" oninput="renderBinReport()" style="width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"> units</label>
         <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
@@ -898,13 +898,15 @@ async function loadBinReport(force){
       const ex=(BR.bins.find(b=>/^\d+\D/.test(String(b.code)))||BR.bins.find(b=>b.skus)||BR.bins[0]||{code:"210-L"}).code;
       const opts=[["bin","Each bin on its own"],["num","Bin number without the letter"],["d2","First 2 digits"],["d1","First digit"],["p1","Text before the first dash"]];
       $("brGroup").innerHTML=opts.map(([v,l])=>`<option value="${v}">${l} (${esc(ex)} → ${esc(brUnitOf(ex,v))})</option>`).join("");
-      $("brGroup").value="num"; loadBinReport._set=true;
+      // Every bin is its own bin (1-R and 1-S are different). Grouping into shelving units is opt-in and remembered.
+      let saved=null; try{ saved=localStorage.getItem("br_group"); }catch(_){}
+      $("brGroup").value=saved&&opts.some(o=>o[0]===saved)?saved:"bin"; loadBinReport._set=true;
     }
     brLetterChips(); renderBinReport();
   }catch(e){ $("brList").innerHTML='<div class="muted center">Couldn\'t load the report: '+esc(e.message)+'</div>'; }
 }
 function brView(v){ BRV=v; ["Units","Bins","Move"].forEach(k=>$("brV"+k).classList.toggle("on",k.toLowerCase()===v)); renderBinReport(); }
-function brUnitOf(code,mode){ mode=mode||$("brGroup").value||"num"; const c=String(code).trim(); const num=(c.match(/^\d+/)||[""])[0];
+function brUnitOf(code,mode){ mode=mode||$("brGroup").value||"bin"; const c=String(code).trim(); const num=(c.match(/^\d+/)||[""])[0];
   if(mode==="bin") return c;
   if(mode==="num") return num || c.replace(/[-\s]*[A-Za-z]+$/,"") || c;
   if(mode==="d2") return num ? num.slice(0,2) : c;
