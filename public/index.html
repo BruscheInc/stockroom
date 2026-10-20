@@ -337,10 +337,10 @@
       <div class="note" style="text-align:left;margin:0 0 10px">Every bin with what's in it. Quantity is Shopify on hand (active listings, all stores). Use it to clear near-empty bins and condense.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="muted" style="font-size:13px">Sort
-          <select id="brSort" onchange="renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
+          <select id="brSort" onchange="BRN=300;renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
             <option value="qty_asc">Item quantity: low → high</option><option value="qty_desc">Item quantity: high → low</option>
             <option value="bin_asc">Bin number: low → high</option><option value="bin_desc">Bin number: high → low</option></select></label>
-        <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
+        <input id="brQ" data-osk="1" inputmode="none" placeholder="Find a bin (R-35) or SKU…" autocomplete="off" oninput="BRN=300;renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
       <div id="brLetters" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
@@ -868,7 +868,7 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
   }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
 
 /* ---------- bin fill report: every bin, emptiest first, for condensing ---------- */
-let BR=null, BRV="bins", BRL=new Set();
+let BR=null, BRV="bins", BRL=new Set(), BRN=300;
 // The location is the letters at the start (S-25) or at the end (534-L) of a bin code. Locations can be several letters.
 function brLetterOf(code){ const c=String(code).trim(); const m=c.match(/^[A-Za-z]+/)||c.match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "—"; }
 function brNumOf(code){ const m=String(code).match(/\d+/); return m? String(Number(m[0])) : String(code); }
@@ -879,7 +879,7 @@ function brLetterChips(){
     +`<button class="chip${BRL.size?"":" on"}" onclick="BRL.clear();brLetterChips();renderBinReport()">All</button>`
     +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${k==="—"?"No location":esc(k)} <span class="muted">${n[k]}</span></button>`).join("");
 }
-function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); brLetterChips(); renderBinReport(); }
+function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); BRN=300; brLetterChips(); renderBinReport(); }
 // Bin order: by location, then bin number (S-1, S-2 … S-57), whichever end the location is written on.
 function brCmpCode(a,b){ const la=brLetterOf(a), lb=brLetterOf(b); if(la!==lb) return la==="—"?1:lb==="—"?-1:la.localeCompare(lb);
   const na=Number(brNumOf(a)), nb=Number(brNumOf(b)); if(na!==nb&&!isNaN(na)&&!isNaN(nb)) return na-nb;
@@ -898,7 +898,8 @@ async function loadBinReport(force){
   catch(e){ $("brList").innerHTML='<div class="muted center">Couldn\'t load the report: '+esc(e.message)+'</div>'; }
 }
 function brView(v){ BRV=v; $("brVBins").classList.toggle("on",v==="bins"); $("brVMove").classList.toggle("on",v==="move"); $("brMoveOpts").classList.toggle("hidden",v!=="move"); renderBinReport(); }
-function brMatch(b,q){ return !q || String(b.code).toLowerCase().includes(q) || b.items.some(i=>String(i.sku).toLowerCase().includes(q)||String(i.title||"").toLowerCase().includes(q)); }
+const brNorm=(x)=>String(x).toLowerCase().replace(/[\s-]+/g,"").replace(/(^|[a-z])0+(\d)/g,"$1$2");
+function brMatch(b,q){ return !q || String(b.code).toLowerCase().includes(q) || brNorm(b.code)===brNorm(q) || brNorm(b.code).includes(brNorm(q)) || b.items.some(i=>String(i.sku).toLowerCase().includes(q)||String(i.title||"").toLowerCase().includes(q)); }
 function brItems(b){ if(!b.items.length) return '<div class="muted" style="font-size:12px;padding:4px 0">Empty</div>';
   const desc=($("brSort")&&$("brSort").value)==="qty_desc"; const items=b.items.slice().sort((x,y)=>desc?(Number(y.qty)||0)-(Number(x.qty)||0):(Number(x.qty)||0)-(Number(y.qty)||0));
   return '<table style="font-size:13px">'+items.map(i=>`<tr onclick="lookup('${esc(i.sku)}');showTab('scan')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}</span>${i.shared?' <span class="pill" title="This SKU is in more than one bin">also elsewhere</span>':""}${i.inactive?' <span class="muted">(not active)</span>':""}</td><td class="n">${i.qty==null?'<span class="muted">?</span>':`<b>${i.qty}</b>`}</td></tr>`).join("")+'</table>'; }
@@ -914,9 +915,9 @@ function renderBinReport(){
   const el=$("brList");
   if(BRV==="bins"){
     const max=Math.max(1,...bins.map(b=>b.units));
-    const rows=bins.filter(b=>brMatch(b,q)).slice(0,800);
+    const all=bins.filter(b=>brMatch(b,q)); const rows=all.slice(0,BRN);
     el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">location ${esc(brLetterOf(b.code))} · bin ${esc(brNumOf(b.code))}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
-      +(bins.filter(b=>brMatch(b,q)).length>800?'<div class="muted center" style="padding:12px">Showing 800 — filter by letter or search to narrow down.</div>':"")||'<div class="muted center">No bins match.</div>';
+      +(all.length>rows.length?`<div id="brMore" class="muted center" style="padding:14px">Showing ${rows.length} of ${all.length} bins — <a style="color:var(--accent2);cursor:pointer" onclick="BRN+=300;renderBinReport()">show more</a></div>`:`<div class="muted center" style="padding:12px;font-size:12px">All ${all.length} bins shown</div>`)||'<div class="muted center">No bins match.</div>';
   } else {
     const mb=brMoveBins(); const rows=[]; mb.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({b:b.code,i}); }));
     rows.sort(brSorter(r=>r.b,r=>Number(r.i.qty)||0));
@@ -924,6 +925,7 @@ function renderBinReport(){
       : '<div class="muted center">No bins with items.</div>';
   }
 }
+window.addEventListener("scroll",()=>{ const m=document.getElementById("brMore"); if(!m||BRV!=="bins"||$("tab-binreport").classList.contains("hidden")) return; if(m.getBoundingClientRect().top<window.innerHeight+300){ BRN+=300; const y=scrollY; renderBinReport(); window.scrollTo(0,y); } },{passive:true});
 function brPrint(){
   const pa=$("printArea"); if(!pa) return window.print();
   const view=BRV==="move"?`Move list — ${esc($("brMoveN").value)} emptiest bins`:"Bins";

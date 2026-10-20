@@ -81,9 +81,14 @@ async function migrate() {
     ts TIMESTAMPTZ DEFAULT now()
   )`);
   await db(`CREATE INDEX IF NOT EXISTS idx_hist_sku ON location_history(sku, ts DESC)`);
-  // Bins are kept as written (S-25 and 534-L are both real formats). Only case, spaces and leading zeros are tidied: "s - 025" is S-25.
+  // Bins are kept as written (S-25 and 534-L are both real formats). Only case, spaces, a missing dash and leading
+  // zeros are tidied: "s - 025", "S25" and "s-25" are all S-25.
   await db(`CREATE OR REPLACE FUNCTION bin_canon(t TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
-    SELECT regexp_replace(regexp_replace(upper(trim(coalesce(t, ''))), '[[:space:]]*-[[:space:]]*', '-', 'g'), '(^|-)0+([0-9])', '\\1\\2', 'g') $$`);
+    SELECT regexp_replace(
+             regexp_replace(regexp_replace(
+               regexp_replace(upper(trim(coalesce(t, ''))), '[[:space:]]*-[[:space:]]*', '-', 'g'),
+             '^([A-Z]+)[[:space:]]*([0-9]+)$', '\\1-\\2'), '^([0-9]+)[[:space:]]*([A-Z]+)$', '\\1-\\2'),
+           '(^|-)0+([0-9])', '\\1\\2', 'g') $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
   // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
   await db(`CREATE TABLE IF NOT EXISTS stock_items (
@@ -674,7 +679,7 @@ async function binItems(code) {
   const r = await db(
     `SELECT il.sku,il.bin,il.title,il.barcode,il.updated_at,il.updated_by,sv.verified_at,sv.verified_by
        FROM item_location il LEFT JOIN stock_verifications sv ON sv.sku = il.sku
-     WHERE bin_canon($1) = ANY(SELECT bin_canon(x) FROM unnest(string_to_array(il.bin, ',')) x) ORDER BY il.sku`,
+     WHERE bin_canon($1) = ANY(SELECT bin_canon(x) FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x) ORDER BY il.sku`,
     [code]
   );
   return r.rows;
@@ -1304,7 +1309,7 @@ app.get("/api/bins", async (req, res) => {
     // (The old per-bin correlated subquery was O(bins×items) and timed out on a full catalog.)
     const r = await db(`
       WITH toks AS (
-        SELECT trim(lower(x)) AS code FROM item_location, unnest(string_to_array(bin, ',')) AS x
+        SELECT trim(lower(x)) AS code FROM item_location, unnest(regexp_split_to_array(bin, '[,;/|]')) AS x
         WHERE bin IS NOT NULL AND bin <> ''
       ), counts AS (
         SELECT code, COUNT(*)::int AS items FROM toks WHERE code <> '' GROUP BY code
@@ -1323,8 +1328,8 @@ app.get("/api/bins/report", async (req, res) => {
     const r = await db(`
       WITH toks AS (
         SELECT il.sku, il.title AS loc_title, bin_canon(x) AS code_raw, bin_canon(x) AS code
-          FROM item_location il, unnest(string_to_array(il.bin, ',')) AS x
-         WHERE il.bin IS NOT NULL AND il.bin <> ''
+          FROM item_location il, unnest(regexp_split_to_array(il.bin, '[,;/|]')) AS x
+         WHERE il.bin IS NOT NULL AND il.bin <> '' AND trim(x) <> ''
       ), nb AS (SELECT sku, COUNT(DISTINCT code)::int AS nbins FROM toks WHERE code <> '' GROUP BY sku
       ), q AS (
         SELECT sku,
