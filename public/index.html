@@ -341,6 +341,7 @@
         <label class="muted" style="font-size:13px">Keep <input id="brTarget" type="number" min="1" value="24" oninput="renderBinReport()" style="width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px"> units</label>
         <input id="brQ" data-osk="1" inputmode="none" placeholder="Filter bins / SKUs…" autocomplete="off" oninput="renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
+      <div id="brLetters" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button class="chip on" id="brVUnits" onclick="brView('units')">Shelving units</button>
         <button class="chip" id="brVBins" onclick="brView('bins')">Bins</button>
@@ -840,7 +841,18 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
   }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
 
 /* ---------- bin fill report: emptiest bins / shelving units first, for consolidating ---------- */
-let BR=null, BRV="units", BROPEN={};
+let BR=null, BRV="units", BROPEN={}, BRL=new Set();
+// The letter at the end of a bin code (210-L → L). Bins without one are "—".
+function brLetterOf(code){ const m=String(code).trim().match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "—"; }
+function brLetterChips(){
+  const n={}; for(const b of BR.bins){ const l=brLetterOf(b.code); n[l]=(n[l]||0)+1; }
+  const keys=Object.keys(n).sort((a,b)=>a==="—"?1:b==="—"?-1:a.localeCompare(b));
+  $("brLetters").innerHTML='<span class="muted" style="font-size:13px">Bin letter:</span>'
+    +`<button class="chip${BRL.size?"":" on"}" onclick="BRL.clear();brLetterChips();renderBinReport()">All</button>`
+    +keys.map(k=>`<button class="chip${BRL.has(k)?" on":""}" onclick="brToggleLetter('${esc(k)}')">${k==="—"?"No letter":esc(k)} <span class="muted">${n[k]}</span></button>`).join("");
+}
+function brToggleLetter(k){ BRL.has(k)?BRL.delete(k):BRL.add(k); brLetterChips(); if(BRL.size&&BRV==="units") return brView("bins"); renderBinReport(); }
+function brBins(){ return BRL.size? BR.bins.filter(b=>BRL.has(brLetterOf(b.code))) : BR.bins; }
 async function loadBinReport(){
   $("brList").innerHTML='<div class="muted center">Loading…</div>';
   try{ BR=await api("/api/bins/report"); if(BR.error) throw new Error(BR.error);
@@ -851,7 +863,7 @@ async function loadBinReport(){
       $("brGroup").innerHTML=opts.map(([v,l])=>`<option value="${v}">${l} (${esc(ex)} → ${esc(brUnitOf(ex,v))})</option>`).join("");
       $("brGroup").value="num"; loadBinReport._set=true;
     }
-    renderBinReport();
+    brLetterChips(); renderBinReport();
   }catch(e){ $("brList").innerHTML='<div class="muted center">Couldn\'t load the report: '+esc(e.message)+'</div>'; }
 }
 function brView(v){ BRV=v; ["Units","Bins","Move"].forEach(k=>$("brV"+k).classList.toggle("on",k.toLowerCase()===v)); renderBinReport(); }
@@ -862,7 +874,7 @@ function brUnitOf(code,mode){ mode=mode||$("brGroup").value||"num"; const c=Stri
   if(mode==="d1") return num ? num.slice(0,1) : c;
   return c.split(/[-.\s_]+/)[0] || c; }
 function brUnits(){
-  const m={}; for(const b of BR.bins){ const u=brUnitOf(b.code); const x=m[u]||(m[u]={unit:u,bins:[],units:0,skus:0,empty:0}); x.bins.push(b); x.units+=b.units; x.skus+=b.skus; if(!b.skus) x.empty++; }
+  const m={}; for(const b of brBins()){ const u=brUnitOf(b.code); const x=m[u]||(m[u]={unit:u,bins:[],units:0,skus:0,empty:0}); x.bins.push(b); x.units+=b.units; x.skus+=b.skus; if(!b.skus) x.empty++; }
   const list=Object.values(m); list.sort((a,b)=>a.units-b.units||a.skus-b.skus||a.unit.localeCompare(b.unit,undefined,{numeric:true}));
   const keep=Math.max(0,Number($("brTarget").value)||0), clear=Math.max(0,list.length-keep);
   list.forEach((u,i)=>{ u.clear=i<clear; u.bins.sort((a,b)=>a.units-b.units||String(a.code).localeCompare(String(b.code),undefined,{numeric:true})); });
@@ -874,7 +886,7 @@ function brItems(b){ if(!b.items.length) return '<div class="muted" style="font-
 function brBar(v,max){ const w=max?Math.max(2,Math.round(100*v/max)):0; return `<div style="height:6px;background:var(--panel2);border-radius:4px;margin-top:4px"><div style="height:6px;width:${w}%;background:var(--accent2);border-radius:4px"></div></div>`; }
 function renderBinReport(){
   if(!BR) return; const q=($("brQ").value||"").trim().toLowerCase();
-  const bins=BR.bins; const {list,clear}=brUnits();
+  const bins=brBins(); const {list,clear}=brUnits();
   const emptyBins=bins.filter(b=>!b.skus).length, low=bins.filter(b=>b.skus&&b.units<=5).length, totalUnits=bins.reduce((s,b)=>s+b.units,0);
   const clearUnits=list.filter(u=>u.clear), moveUnits=clearUnits.reduce((s,u)=>s+u.units,0), moveSkus=clearUnits.reduce((s,u)=>s+u.skus,0);
   $("brSum").innerHTML=[[bins.length,"bins"],[emptyBins,"empty bins"],[low,"bins with 1–5 units"],[list.length,"shelving units"],[totalUnits,"units on shelves"],
@@ -905,7 +917,7 @@ function renderBinReport(){
 function brPrint(){
   const pa=$("printArea"); if(!pa) return window.print();
   const view={units:"Shelving units, emptiest first",bins:"Bins, emptiest first",move:"Move list — units to empty"}[BRV];
-  pa.innerHTML=`<h2 style="margin:0 0 4px">Bin fill report · ${view}</h2><div style="font-size:12px;margin-bottom:12px">${new Date().toLocaleString()} · keep ${esc($("brTarget").value)} shelving units</div><div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px">${$("brSum").innerHTML}</div><div style="font-size:12px">${$("brList").innerHTML}</div>`;
+  pa.innerHTML=`<h2 style="margin:0 0 4px">Bin fill report · ${view}</h2><div style="font-size:12px;margin-bottom:12px">${new Date().toLocaleString()} · keep ${esc($("brTarget").value)} shelving units${BRL.size?" · bin letter "+esc([...BRL].join(", ")):""}</div><div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px">${$("brSum").innerHTML}</div><div style="font-size:12px">${$("brList").innerHTML}</div>`;
   setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.innerHTML=""; },500); },50);
 }
 function brCsv(){
