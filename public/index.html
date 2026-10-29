@@ -751,12 +751,15 @@ function snapView(){
   if(t==="scan"){
     const tmp=document.createElement("div"); tmp.innerHTML=$("result").innerHTML;
     tmp.querySelectorAll(".backbar").forEach(b=>b.remove());          // the back button is re-added on restore
-    e.html=tmp.innerHTML; e.view=currentView; e.code=lastCode; e.sku=LAST_ITEM_SKU;
+    e.html=tmp.innerHTML; e.view=currentView; e.code=lastCode; e.sku=LAST_ITEM_SKU; e.pending=LOOKUP_PENDING;
     e.label=currentView&&currentView.kind==="bin"?"bin "+currentView.key:(LAST_ITEM_SKU||"previous item");
   } else e.label=TAB_NAMES[t];
   return e;
 }
+let LOOKUP_SEQ=0, LOOKUP_PENDING=false;
 function showView(e){
+  LOOKUP_SEQ++; LOOKUP_PENDING=false;                                   // drop any lookup still in flight
+  if(e.tab==="scan" && e.pending && e.code){ showTab("scan"); lookup(e.code,{restore:true}); setTimeout(()=>window.scrollTo(0,0),40); return; }
   if(e.tab==="scan"){
     showTab("scan"); $("result").innerHTML=e.html||""; currentView=e.view; lastCode=e.code; LAST_ITEM_SKU=e.sku||null;
     if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar());
@@ -768,16 +771,24 @@ function navPush(){
   const e=snapView(); if(e.tab==="scan" && !e.html.trim()) return;
   NAV.push(e); if(NAV.length>25) NAV.shift();
   FWD=[];                                                            // a new step drops the old forward trail
-  try{ history.pushState({sr:NAV.length},""); }catch(_){}
+  armHistory();
 }
-function goBack(){ const e=NAV.pop(); if(!e) return; FWD.push(snapView()); showView(e); }
-function goForward(){ const e=FWD.pop(); if(!e) return; NAV.push(snapView()); showView(e); }
-function backPressed(){ if(history.state&&history.state.sr){ const n=NAV.length; history.back(); setTimeout(()=>{ if(NAV.length===n) goBack(); },250); } else goBack(); }
-// Phone back/forward gestures: the history entry's depth says which way we went.
-window.addEventListener("popstate",(ev)=>{
-  const depth=(ev.state&&ev.state.sr)||0;
-  while(depth<NAV.length && NAV.length) goBack();
-  while(depth>NAV.length && FWD.length) goForward();
+/* The app's own trail (NAV/FWD) is the only source of truth. The browser history holds just one spare
+   entry (a "trap"), so the phone's back button / Safari's edge swipe lands here as a single back step
+   and can never walk into old, out-of-date entries or off the app to a blank page. */
+let NAV_AT=0;                                                         // last step time — one gesture = one step
+function stepGuard(){ const now=Date.now(); if(now-NAV_AT<450) return false; NAV_AT=now; return true; }
+function goBack(){ const e=NAV.pop(); if(!e) return false; FWD.push(snapView()); showView(e); return true; }
+function goForward(){ const e=FWD.pop(); if(!e) return false; NAV.push(snapView()); armHistory(); showView(e); return true; }
+function backPressed(){ if(stepGuard()) goBack(); }
+function forwardPressed(){ if(stepGuard()) goForward(); }
+function armHistory(){ try{ if(!(history.state&&history.state.srTrap)) history.pushState({srTrap:1},""); }catch(_){} }
+window.addEventListener("popstate",()=>{
+  // The browser just stepped back off our spare entry: do one in-app step, then put the spare entry back.
+  // With nothing left to go back to, let the next back press leave the app as normal.
+  if(!NAV.length) return;
+  if(stepGuard()) goBack();
+  if(NAV.length) try{ history.pushState({srTrap:1},""); }catch(_){}
 });
 /* Swipe right = back, swipe left = forward, on any screen. The home-screen app has no browser gesture of its own. */
 (function(){
@@ -788,14 +799,17 @@ window.addEventListener("popstate",(ev)=>{
     const back=dx>0, ok=back?NAV.length>0:FWD.length>0; const p=Math.min(1,Math.abs(dx)/90);
     ind.textContent=back?"‹":"›"; ind.style.left=back?(Math.min(dx,90)-44+8)+"px":""; ind.style.right=back?"":(Math.min(-dx,90)-44+8)+"px"; ind.style.opacity=ok?String(p):"0"; };
   const hide=()=>{ if(ind){ ind.remove(); ind=null; } };
-  document.addEventListener("touchstart",(e)=>{ if(e.touches.length!==1||blocked(e.target)){ on=false; return; } const t=e.touches[0]; x0=t.clientX; y0=t.clientY; t0=Date.now(); on=true; dir=0; },{passive:true});
+  // In a browser tab the phone already owns edge swipes — leave those to it (it comes back through popstate).
+  const standalone=(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true;
+  document.addEventListener("touchstart",(e)=>{ if(e.touches.length!==1||blocked(e.target)){ on=false; return; } const t=e.touches[0];
+    if(!standalone && (t.clientX<24 || t.clientX>window.innerWidth-24)){ on=false; return; } x0=t.clientX; y0=t.clientY; t0=Date.now(); on=true; dir=0; },{passive:true});
   document.addEventListener("touchmove",(e)=>{ if(!on) return; const t=e.touches[0], dx=t.clientX-x0, dy=t.clientY-y0;
     if(!dir){ if(Math.abs(dx)>14&&Math.abs(dx)>Math.abs(dy)*1.6) dir=1; else if(Math.abs(dy)>14){ on=false; return; } }
     if(dir) show(dx); },{passive:true});
   document.addEventListener("touchend",(e)=>{ if(!on){ hide(); return; } on=false; const t=e.changedTouches[0], dx=t.clientX-x0, dy=t.clientY-y0; hide();
     if(!dir||Math.abs(dx)<80||Math.abs(dy)>Math.abs(dx)*0.6||Date.now()-t0>900) return;
     if(dx>0&&NAV.length){ backPressed(); navigator.vibrate&&navigator.vibrate(15); }
-    else if(dx<0&&FWD.length){ const n=FWD.length; try{ history.forward(); }catch(_){} setTimeout(()=>{ if(FWD.length===n) goForward(); },250); navigator.vibrate&&navigator.vibrate(15); }
+    else if(dx<0&&FWD.length){ forwardPressed(); navigator.vibrate&&navigator.vibrate(15); }
   },{passive:true});
   document.addEventListener("touchcancel",()=>{ on=false; hide(); });
 })();
@@ -805,15 +819,25 @@ function backBar(){ const e=NAV[NAV.length-1]; if(!e) return "";
 async function lookup(code, opts){
   opts=opts||{};
   if(opts.scan) navReset();
-  else {
+  else if(!opts.restore){
     // Re-loading the item already on screen (after a save / refresh) isn't a new step.
     const same = visibleTab()==="scan" && (code===lastCode || (LAST_ITEM_SKU && code===LAST_ITEM_SKU) || (currentView&&currentView.kind==="bin"&&String(code).replace(/^BIN[-:]/i,"")===currentView.key));
     if(!same){ navPush(); window.scrollTo(0,0); }
   }
   lastCode=code;
-  $("result").innerHTML='<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
+  const my=++LOOKUP_SEQ; LOOKUP_PENDING=true;
+  $("result").innerHTML=(NAV.length?backBar():"")+'<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
   showTab("scan");
-  let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); }catch(e){ return; }
+  let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); if(!d||d.error) throw new Error((d&&d.error)||"no answer"); }
+  catch(e){
+    if(my!==LOOKUP_SEQ) return;                                         // you've already moved on
+    LOOKUP_PENDING=false;
+    if(String(e.message)==="401") return;
+    $("result").innerHTML=(NAV.length?backBar():"")+`<div class="card center"><p class="title" style="font-size:17px">Couldn't load ${esc(code)}</p><p class="muted" style="margin:4px 0 12px">The connection dropped or the server was slow.</p><button class="btn" onclick="lookup(${esc(JSON.stringify(code))},{restore:true})"><i class="ti ti-refresh"></i> Try again</button></div>`;
+    return;
+  }
+  if(my!==LOOKUP_SEQ) return;                                           // you swiped back while this was loading
+  LOOKUP_PENDING=false;
   if(d.type==="item") renderItem(d);
   else if(d.type==="bin") renderBin(d);
   else if(d.type==="order") renderOrder(d, $("result"));
