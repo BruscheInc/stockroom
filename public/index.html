@@ -221,7 +221,7 @@
       <button class="btn" onclick="addBin()">Add</button>
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
-    <button class="btn ghost wide" style="margin-top:8px" onclick="showTab('binreport')">📉 Bin fill report (emptiest first)</button>
+    <button class="btn ghost wide" style="margin-top:8px" onclick="BRO.clear();showTab('binreport')">📉 Bin fill report (emptiest first)</button>
     <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
@@ -402,7 +402,7 @@
     <button class="menuitem" data-tab="activity" onclick="menuGo('activity')"><span class="i">🧮</span> Quantity activity</button>
     <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><span class="i">📦</span> Overstock</button>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
-    <button class="menuitem" data-tab="binreport" onclick="menuGo('binreport')"><span class="i">📉</span> Bin fill report</button>
+    <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><span class="i">📉</span> Bin fill report</button>
     <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
     <div class="menusec">Actions</div>
     <button class="menuitem" onclick="closeMenu();refreshNow()"><span class="i">⟳</span> Refresh</button>
@@ -868,7 +868,10 @@ async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textCo
   }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
 
 /* ---------- bin fill report: every bin, emptiest first, for condensing ---------- */
-let BR=null, BRV="bins", BRL=new Set(), BRN=300;
+let BR=null, BRV="bins", BRL=new Set(), BRN=300, BRO=new Set(), BR_ALL=false;
+// Bins start collapsed; tapping a bin's row opens/closes its item list.
+function brToggle(code){ BRO.has(code)?BRO.delete(code):BRO.add(code); const y=scrollY; renderBinReport(); window.scrollTo(0,y); }
+function brOpenAll(open){ BRO.clear(); if(open) for(const b of brBins()) BRO.add(String(b.code)); renderBinReport(); }
 // Location comes from the server (R-35 → R, 35-T → T). Only the current warehouse locations get a filter;
 // old ones are grouped under "Other" and left out of "All".
 function brLetterOf(code){ if(code&&typeof code==="object") return code.known?code.loc:"OTHER"; const c=String(code).trim(); const m=c.match(/^[A-Za-z]+/)||c.match(/[A-Za-z]+$/); return m? m[0].toUpperCase() : "OTHER"; }
@@ -920,7 +923,13 @@ function renderBinReport(){
   if(BRV==="bins"){
     const max=Math.max(1,...bins.map(b=>b.units));
     const all=bins.filter(b=>brMatch(b,q)); const rows=all.slice(0,BRN);
-    el.innerHTML=rows.map(b=>`<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div style="display:flex;gap:10px;align-items:center"><a onclick="lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">${b.known?`location ${esc(b.loc)} · bin ${esc(b.num)}`:"old / no location"}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}<div style="margin-top:6px">${brItems(b)}</div></div>`).join("")
+    // A search for a SKU or item name opens the bins that hold it; a bin-code search does not.
+    const itemHit=(b)=>q && b.items.some(i=>String(i.sku).toLowerCase().includes(q)||String(i.title||"").toLowerCase().includes(q));
+    const isOpen=(b)=>BR_ALL||BRO.has(String(b.code))||itemHit(b);
+    const anyOpen=rows.some(isOpen);
+    el.innerHTML=(rows.length?`<div style="display:flex;justify-content:flex-end;padding:0 2px 4px"><a style="color:var(--accent2);cursor:pointer;font-size:13px" onclick="brOpenAll(${anyOpen?"false":"true"})">${anyOpen?"Collapse all":"Expand all"}</a></div>`:"")
+      +rows.map(b=>{ const open=isOpen(b); const c=esc(String(b.code)).replace(/'/g,"\\'");
+      return `<div style="border-bottom:1px solid var(--line);padding:10px 2px"><div onclick="brToggle('${c}')" style="display:flex;gap:10px;align-items:center;cursor:pointer"><span class="muted" style="width:12px;display:inline-block;transition:transform .15s;transform:rotate(${open?90:0}deg)">›</span><a onclick="event.stopPropagation();lookup('BIN-${esc(b.code)}');showTab('scan')" class="pill bin" style="cursor:pointer;white-space:nowrap;font-size:14px">${esc(b.code)}</a><span class="muted" style="font-size:12px;white-space:nowrap">${b.known?`location ${esc(b.loc)} · bin ${esc(b.num)}`:"old / no location"}</span><span style="flex:1"></span><span class="muted" style="font-size:13px">${b.skus} SKU${b.skus===1?"":"s"}</span><b style="min-width:54px;text-align:right">${b.units}</b></div>${brBar(b.units,max)}${open?`<div style="margin-top:6px">${brItems(b)}</div>`:""}</div>`; }).join("")
       +(all.length>rows.length?`<div id="brMore" class="muted center" style="padding:14px">Showing ${rows.length} of ${all.length} bins — <a style="color:var(--accent2);cursor:pointer" onclick="BRN+=300;renderBinReport()">show more</a></div>`:`<div class="muted center" style="padding:12px;font-size:12px">All ${all.length} bins shown</div>`)||'<div class="muted center">No bins match.</div>';
   } else {
     const mb=brMoveBins(); const rows=[]; mb.forEach(b=>b.items.forEach(i=>{ if(!q||brMatch({code:b.code,items:[i]},q)) rows.push({b:b.code,bin:b,i}); }));
@@ -932,8 +941,10 @@ function renderBinReport(){
 window.addEventListener("scroll",()=>{ const m=document.getElementById("brMore"); if(!m||BRV!=="bins"||$("tab-binreport").classList.contains("hidden")) return; if(m.getBoundingClientRect().top<window.innerHeight+300){ BRN+=300; const y=scrollY; renderBinReport(); window.scrollTo(0,y); } },{passive:true});
 function brPrint(){
   const pa=$("printArea"); if(!pa) return window.print();
+  if(BRV==="bins"){ BR_ALL=true; renderBinReport(); }
   const view=BRV==="move"?`Move list — ${esc($("brMoveN").value)} emptiest bins`:"Bins";
   pa.innerHTML=`<h2 style="margin:0 0 4px">Bin fill report · ${view}</h2><div style="font-size:12px;margin-bottom:12px">${new Date().toLocaleString()}${BRL.size?" · location "+esc([...BRL].join(", ")):""} · ${esc($("brSort").selectedOptions[0].text)}</div><div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px">${$("brSum").innerHTML}</div><div style="font-size:12px">${$("brList").innerHTML}</div>`;
+  if(BR_ALL){ BR_ALL=false; renderBinReport(); }
   setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.innerHTML=""; },500); },50);
 }
 function brCsv(){
