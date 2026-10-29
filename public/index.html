@@ -248,6 +248,7 @@
   .oosbtn{display:inline-flex;align-items:center;gap:5px}
   .stat{background:#fff;box-shadow:var(--sh-1)}.stat .n{font-size:21px;letter-spacing:-.02em}
   .pgbtn{background:#fff}.pgbtn.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .keypad,.keypad button,.stepper .btn,.reasons button{touch-action:manipulation}
   .keypad button{background:#fff;box-shadow:var(--sh-1)}
   .keypad button:active{background:var(--ink);color:#fff}
   .stepper input{background:#fff!important}
@@ -377,7 +378,7 @@
     </div>
     <button class="btn ghost wide" id="syncBtn" onclick="syncSS()"><i class="ti ti-cloud-download"></i> Import existing bins from ShipStation</button>
     <button class="btn ghost wide" style="margin-top:8px" onclick="BRO.clear();showTab('binreport')"><i class="ti ti-chart-bar"></i> Bin fill report (emptiest first)</button>
-    <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
+    <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="clearTimeout(window._blT);window._blT=setTimeout(renderBinList,120)" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
   </section>
@@ -495,7 +496,7 @@
           <select id="brSort" onchange="BRN=300;renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
             <option value="bin_asc" selected>Bin number: low → high</option><option value="bin_desc">Bin number: high → low</option>
             <option value="qty_asc">Item quantity: low → high</option><option value="qty_desc">Item quantity: high → low</option></select></label>
-        <input id="brQ" data-osk="1" inputmode="none" placeholder="Find a bin (R-35) or SKU…" autocomplete="off" oninput="BRN=300;renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
+        <input id="brQ" data-osk="1" inputmode="none" placeholder="Find a bin (R-35) or SKU…" autocomplete="off" oninput="clearTimeout(window._brT);window._brT=setTimeout(()=>{BRN=300;renderBinReport()},160)" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
       <div id="brLetters" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
@@ -793,7 +794,7 @@ window.addEventListener("popstate",()=>{
 /* Swipe right = back, swipe left = forward, on any screen. The home-screen app has no browser gesture of its own. */
 (function(){
   let x0=0,y0=0,t0=0,on=false,dir=0,ind=null;
-  const blocked=(el)=>{ for(let n=el;n&&n!==document.body;n=n.parentElement){ if(/^(INPUT|TEXTAREA|SELECT|VIDEO|CANVAS)$/.test(n.tagName)) return true; if(n.id==="drawer"||n.classList&&n.classList.contains("noswipe")) return true;
+  const blocked=(el)=>{ for(let n=el;n&&n!==document.body;n=n.parentElement){ if(/^(INPUT|TEXTAREA|SELECT|VIDEO|CANVAS)$/.test(n.tagName)) return true; if(n.id==="drawer"||n.id==="osk"||n.id==="oskFab"||n.classList&&(n.classList.contains("noswipe")||n.classList.contains("modal")||n.classList.contains("keypad"))) return true;
       const cs=getComputedStyle(n); if((cs.overflowX==="auto"||cs.overflowX==="scroll")&&n.scrollWidth>n.clientWidth+2) return true; } return false; };
   const show=(dx)=>{ if(!ind){ ind=document.createElement("div"); ind.style.cssText="position:fixed;top:45%;z-index:99;width:44px;height:44px;border-radius:50%;background:rgba(22,21,29,.85);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;pointer-events:none;transition:opacity .1s"; document.body.appendChild(ind); }
     const back=dx>0, ok=back?NAV.length>0:FWD.length>0; const p=Math.min(1,Math.abs(dx)/90);
@@ -1711,16 +1712,18 @@ function oskEligible(el){ return !!(el && el.tagName==="INPUT" && el.dataset && 
 document.addEventListener("focusin",(e)=>{ if(oskEligible(e.target)){ OSK_TARGET=e.target; if(IS_TOUCH && !$("osk").classList.contains("show")) $("oskFab").classList.add("show"); } });
 document.addEventListener("focusout",(e)=>{ if(oskEligible(e.target)) setTimeout(()=>{ if(!$("osk").classList.contains("show") && !oskEligible(document.activeElement)) $("oskFab").classList.remove("show"); },120); });
 function oskCap(c){ return (OSK_SHIFT||OSK_LOCK) && /[a-z]/.test(c) ? c.toUpperCase() : c; }
+// The keys are built once per layer; Shift only relabels the letters, typing only touches the field and the
+// "Typing" bar. Nothing on the page is rebuilt per keypress, so it keeps up with fast two-thumb typing.
+let OSK_LETTERS=[], OSK_SHIFTKEY=null, OSK_VAL=null;
 function oskRender(){
   const rows=OSK_LAYOUTS[OSK_LAYER];
   const key=(c)=>`<button type="button" class="k" data-ch="${esc(c)}">${esc(oskCap(c))}</button>`;
-  const shiftLabel = OSK_LOCK ? "\u21ea" : "\u21e7";
+  const shiftLabel = OSK_LOCK ? "⇪" : "⇧";
   const r3 = OSK_LAYER==="abc"
-    ? `<button type="button" class="k fn${OSK_SHIFT||OSK_LOCK?" on":""}" data-act="shift">${shiftLabel}</button>${rows[2].map(key).join("")}<button type="button" class="k fn" data-act="back">\u232b</button>`
-    : `<button type="button" class="k fn" data-act="layer" data-layer="${OSK_LAYER==="123"?"#+=":"123"}">${OSK_LAYER==="123"?"#+=":"123"}</button><span class="sp"></span>${rows[2].map(key).join("")}<span class="sp"></span><button type="button" class="k fn" data-act="back">\u232b</button>`;
-  const val=OSK_TARGET?(OSK_TARGET.value||""):"";
+    ? `<button type="button" class="k fn${OSK_SHIFT||OSK_LOCK?" on":""}" data-act="shift">${shiftLabel}</button>${rows[2].map(key).join("")}<button type="button" class="k fn" data-act="back">⌫</button>`
+    : `<button type="button" class="k fn" data-act="layer" data-layer="${OSK_LAYER==="123"?"#+=":"123"}">${OSK_LAYER==="123"?"#+=":"123"}</button><span class="sp"></span>${rows[2].map(key).join("")}<span class="sp"></span><button type="button" class="k fn" data-act="back">⌫</button>`;
   $("osk").innerHTML=`
-    <div class="oskbar"><span>Typing</span><span class="val">${esc(val)||"&nbsp;"}</span><button type="button" class="done" data-act="done">Done</button></div>
+    <div class="oskbar"><span>Typing</span><span class="val"></span><button type="button" class="done" data-act="done">Done</button></div>
     <div class="oskrow">${rows[0].map(key).join("")}</div>
     <div class="oskrow">${rows[1].length<10?'<span class="sp"></span>':""}${rows[1].map(key).join("")}${rows[1].length<10?'<span class="sp"></span>':""}</div>
     <div class="oskrow">${r3}</div>
@@ -1729,65 +1732,72 @@ function oskRender(){
       <button type="button" class="k space" data-ch=" ">space</button>
       <button type="button" class="k go" data-act="enter">return</button>
     </div>`;
+  OSK_LETTERS=[...$("osk").querySelectorAll(".k[data-ch]")].filter(b=>/^[a-z]$/.test(b.dataset.ch));
+  OSK_SHIFTKEY=$("osk").querySelector('[data-act="shift"]'); OSK_VAL=$("osk").querySelector(".val");
+  oskBarOnly();
+}
+function oskCaps(){ const up=OSK_SHIFT||OSK_LOCK; for(const b of OSK_LETTERS) b.textContent=up?b.dataset.ch.toUpperCase():b.dataset.ch;
+  if(OSK_SHIFTKEY){ OSK_SHIFTKEY.classList.toggle("on",up); OSK_SHIFTKEY.textContent=OSK_LOCK?"⇪":"⇧"; } }
+function oskBarOnly(){ if(OSK_VAL) OSK_VAL.textContent=(OSK_TARGET&&OSK_TARGET.value)||" "; }
+function oskEdit(fn){
+  const t=OSK_TARGET; if(!t) return;
+  const v=t.value||""; let a=t.selectionStart, b=t.selectionEnd;
+  if(a==null||b==null||a>v.length){ a=b=v.length; }
+  const r=fn(v,a,b); if(!r) return;
+  t.value=r.v; try{ t.setSelectionRange(r.pos,r.pos); }catch(e){}
+  t.dispatchEvent(new Event("input",{bubbles:true}));
+  oskBarOnly();
 }
 // Insert at the caret (not blindly at the end) so edits mid-string work.
-function oskInsert(ch){
-  const t=OSK_TARGET; if(!t) return;
-  const v=t.value||"";
-  let a=t.selectionStart, b=t.selectionEnd;
-  if(a==null||b==null){ a=b=v.length; }
-  t.value=v.slice(0,a)+ch+v.slice(b);
-  const pos=a+ch.length; try{ t.setSelectionRange(pos,pos); }catch(e){}
-  t.dispatchEvent(new Event("input",{bubbles:true}));
-}
-function oskBack(){
-  const t=OSK_TARGET; if(!t) return;
-  const v=t.value||"";
-  let a=t.selectionStart, b=t.selectionEnd;
-  if(a==null||b==null){ a=b=v.length; }
-  if(a===b){ if(a===0) return; t.value=v.slice(0,a-1)+v.slice(b); a--; }
-  else { t.value=v.slice(0,a)+v.slice(b); }
-  try{ t.setSelectionRange(a,a); }catch(e){}
-  t.dispatchEvent(new Event("input",{bubbles:true}));
-  oskRender();
-}
-function oskKey(c){ oskInsert(oskCap(c)); if(OSK_SHIFT&&!OSK_LOCK){ OSK_SHIFT=false; oskRender(); } else { oskBarOnly(); } }
-function oskBarOnly(){ const v=$("osk").querySelector(".val"); if(v) v.innerHTML=esc((OSK_TARGET&&OSK_TARGET.value)||"")||"&nbsp;"; }
+function oskInsert(ch){ oskEdit((v,a,b)=>({v:v.slice(0,a)+ch+v.slice(b),pos:a+ch.length})); }
+function oskBack(){ oskEdit((v,a,b)=> a!==b ? {v:v.slice(0,a)+v.slice(b),pos:a} : (a===0?null:{v:v.slice(0,a-1)+v.slice(b),pos:a-1})); }
+function oskKey(c){ oskInsert(oskCap(c)); if(OSK_SHIFT&&!OSK_LOCK){ OSK_SHIFT=false; oskCaps(); } }
 function oskShift(){
   const now=Date.now();
   if(now-OSK_SHIFT_TS<350){ OSK_LOCK=!OSK_LOCK; OSK_SHIFT=false; }      // double-tap → caps lock
   else if(OSK_LOCK){ OSK_LOCK=false; OSK_SHIFT=false; }
   else { OSK_SHIFT=!OSK_SHIFT; }
-  OSK_SHIFT_TS=now; oskRender();
+  OSK_SHIFT_TS=now; oskCaps();
 }
 function oskLayer(l){ OSK_LAYER=l; if(l!=="abc"){ OSK_SHIFT=false; OSK_LOCK=false; } oskRender(); }
 function oskOpen(){ if(!OSK_TARGET) return; OSK_LAYER="abc"; OSK_SHIFT=false; OSK_LOCK=false; oskRender();
   $("osk").classList.add("show"); $("oskFab").classList.remove("show");
   document.body.style.paddingBottom="300px"; }
-function oskClose(){ $("osk").classList.remove("show"); $("oskFab").classList.remove("show"); oskPopHide(); document.body.style.paddingBottom=""; }
+function oskClose(){ oskStopRepeat(); $("osk").classList.remove("show"); $("oskFab").classList.remove("show"); oskPopHide(); document.body.style.paddingBottom=""; }
 function oskEnter(){ const t=OSK_TARGET; oskClose(); if(t) t.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true})); }
 // iOS-style magnified bubble over the pressed key.
 function oskPopShow(btn,ch){
-  const p=$("oskPop"); const r=btn.getBoundingClientRect();
-  p.textContent=ch; p.style.display="block";
-  p.style.left=Math.round(r.left+r.width/2-Math.max(44,r.width)/2)+"px";
-  p.style.minWidth=Math.max(44,r.width)+"px";
-  p.style.top=Math.round(r.top-r.height-6)+"px";
+  const p=$("oskPop"); const r=btn.getBoundingClientRect(), w=Math.max(44,r.width);
+  p.textContent=ch; p.style.minWidth=w+"px";
+  p.style.left=Math.round(r.left+r.width/2-w/2)+"px"; p.style.top=Math.round(r.top-r.height-6)+"px"; p.style.display="block";
 }
 function oskPopHide(){ $("oskPop").style.display="none"; }
-// One delegated handler for the whole keyboard: pointerdown keeps focus in the field and fires the key.
-$("osk").addEventListener("pointerdown",(e)=>{
-  const b=e.target.closest("button"); if(!b) return;
-  e.preventDefault();
+function oskStopRepeat(){ if(OSK_REPEAT){ clearTimeout(OSK_REPEAT); OSK_REPEAT=null; } }
+function oskPress(b){
   const act=b.dataset.act, ch=b.dataset.ch;
-  if(ch!=null){ if(ch!==" ") oskPopShow(b,oskCap(ch)); oskKey(ch); return; }
+  if(ch!=null){ if(ch!==" ") oskPopShow(b,oskCap(ch)); else oskPopHide(); oskKey(ch); return; }
+  oskPopHide();
   if(act==="shift") return oskShift();
   if(act==="layer") return oskLayer(b.dataset.layer);
   if(act==="done") return oskClose();
   if(act==="enter") return oskEnter();
-  if(act==="back"){ oskBack(); OSK_REPEAT=setTimeout(function rep(){ oskBack(); OSK_REPEAT=setTimeout(rep,90); },420); }
-});
-const oskRelease=()=>{ oskPopHide(); if(OSK_REPEAT){ clearTimeout(OSK_REPEAT); OSK_REPEAT=null; } };
+  if(act==="back"){ oskStopRepeat(); oskBack(); OSK_REPEAT=setTimeout(function rep(){ oskBack(); OSK_REPEAT=setTimeout(rep,80); },400); }
+}
+// Touch: act the instant a finger lands (each finger separately, so overlapping thumbs both count), and
+// cancel the browser's own handling so focus, zoom and scrolling never get in the way of a keystroke.
+$("osk").addEventListener("touchstart",(e)=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){ const b=t.target&&t.target.closest&&t.target.closest("button"); if(b) oskPress(b); }
+},{passive:false});
+$("osk").addEventListener("touchend",(e)=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){ const b=t.target&&t.target.closest&&t.target.closest("button"); if(b&&b.dataset.act==="back") oskStopRepeat(); }
+  if(!e.touches.length) oskPopHide();
+},{passive:false});
+$("osk").addEventListener("touchcancel",()=>{ oskStopRepeat(); oskPopHide(); });
+// Mouse / pen (desktop): same keys on press.
+$("osk").addEventListener("pointerdown",(e)=>{ if(e.pointerType==="touch") return; const b=e.target.closest("button"); if(!b) return; e.preventDefault(); oskPress(b); });
+const oskRelease=(e)=>{ if(e&&e.pointerType==="touch") return; oskPopHide(); oskStopRepeat(); };
 $("osk").addEventListener("pointerup",oskRelease);
 $("osk").addEventListener("pointercancel",oskRelease);
 $("osk").addEventListener("pointerleave",oskRelease);
