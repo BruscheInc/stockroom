@@ -44,6 +44,8 @@ const ENV_ADMINS = (process.env.STOCKROOM_ADMINS || "Jose").split(",").map((s) =
  * session token; the app sends that token as its key, so every existing API call works unchanged.
  * The built-in STOCKROOM_USERS logins and ACCESS_KEY keep working, so nobody gets locked out. */
 const SESSIONS = new Map();   // token -> { name, role, user_id, exp }
+const TAKEN = new Set();      // lower-case usernames that have an app account — a built-in login with that name is retired
+const retired = (u) => TAKEN.has(u.name.toLowerCase()) || TAKEN.has(u.key.toLowerCase());
 const SESSION_DAYS = 180;     // warehouse phones stay signed in
 function hashPassword(pw) { const salt = crypto.randomBytes(16).toString("hex"); return { salt, hash: crypto.scryptSync(String(pw), salt, 64).toString("hex") }; }
 function checkPassword(pw, salt, hash) { try { const h = crypto.scryptSync(String(pw), salt, 64), b = Buffer.from(hash, "hex"); return h.length === b.length && crypto.timingSafeEqual(h, b); } catch { return false; } }
@@ -53,7 +55,7 @@ function whoFromKey(key) {
   if (!k) return null;
   const s = SESSIONS.get(k);
   if (s) { if (s.exp > Date.now()) return { name: s.name, role: s.role, user_id: s.user_id }; SESSIONS.delete(k); }
-  const u = USERS.find((u) => u.key.toLowerCase() === k.toLowerCase());
+  const u = USERS.find((u) => u.key.toLowerCase() === k.toLowerCase() && !retired(u));
   if (u) return { name: u.name, role: ENV_ADMINS.includes(u.name.toLowerCase()) ? "admin" : "staff", builtin: true };
   if (ACCESS_KEY && k === ACCESS_KEY) return { name: "admin", role: "admin", builtin: true };
   return null;
@@ -950,7 +952,9 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/api/role", (req, res) => { const w = whoFromKey(keyFrom(req)); res.json({ ok: !!w, user: w ? w.name : null, role: w ? w.role : null, account: !!(w && w.user_id) }); });
 
 /* ---- Sign in / out ---- */
+async function loadTaken() { const r = await db(`SELECT lower(username) AS u FROM sr_users`); TAKEN.clear(); for (const x of r.rows) TAKEN.add(x.u); }
 async function loadSessions() {
+  await loadTaken();
   const r = await db(`SELECT s.token, s.expires_at, u.id, u.name, u.role FROM sr_sessions s JOIN sr_users u ON u.id = s.user_id WHERE s.expires_at > now() AND u.active`);
   SESSIONS.clear();
   for (const x of r.rows) SESSIONS.set(x.token, { name: x.name, role: x.role, user_id: x.id, exp: new Date(x.expires_at).getTime() });
@@ -980,7 +984,8 @@ app.post("/api/login", async (req, res) => {
     // Built-in logins (STOCKROOM_USERS): the username itself — or "Name" + its secret as the password — is the key.
     // Same forgiving match as the old one-box sign-in: case doesn't matter, and the secret can go in either box.
     const lc = (v) => String(v || "").trim().toLowerCase();
-    const env = USERS.find((x) => lc(x.key) === lc(username)) || (password && USERS.find((x) => lc(x.key) === lc(password) && (lc(x.name) === lc(username) || !username)));
+    const live = USERS.filter((x) => !retired(x));
+    const env = live.find((x) => lc(x.key) === lc(username)) || (password && live.find((x) => lc(x.key) === lc(password) && (lc(x.name) === lc(username) || !username)));
     if (env) { const w = whoFromKey(env.key); return res.json({ ok: true, key: env.key, user: w.name, role: w.role }); }
     if (ACCESS_KEY && (username === ACCESS_KEY || password === ACCESS_KEY)) return res.json({ ok: true, key: ACCESS_KEY, user: "admin", role: "admin" });
     FAILS.get(ip).push(Date.now());
@@ -1016,7 +1021,7 @@ app.get("/api/admin/users", async (req, res) => {
   if (!adminGuard(req, res)) return;
   try {
     const users = (await db(`SELECT id,name,username,role,active,created_by,created_at,last_login FROM sr_users ORDER BY active DESC, lower(name)`)).rows;
-    const builtin = USERS.map((u) => ({ name: u.name, role: ENV_ADMINS.includes(u.name.toLowerCase()) ? "admin" : "staff" }));
+    const builtin = USERS.map((u) => ({ name: u.name, role: ENV_ADMINS.includes(u.name.toLowerCase()) ? "admin" : "staff", replaced: retired(u) }));
     const log = (await db(`SELECT who,target,detail,ts FROM sr_user_log ORDER BY ts DESC LIMIT 30`)).rows;
     res.json({ users, builtin, log });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1028,12 +1033,13 @@ app.post("/api/admin/users", async (req, res) => {
     if (!name) return res.status(400).json({ error: "Enter a name." });
     if (!USERNAME_RE.test(username)) return res.status(400).json({ error: "Username: 2–32 letters, numbers, dots, dashes or underscores. No spaces." });
     if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
-    if (USERS.some((u) => u.name.toLowerCase() === username.toLowerCase() || u.key.toLowerCase() === username.toLowerCase())) return res.status(400).json({ error: `"${username}" is already a built-in login. Pick another username.` });
     if ((await db(`SELECT 1 FROM sr_users WHERE lower(username)=lower($1)`, [username])).rows.length) return res.status(400).json({ error: `Username "${username}" is taken.` });
     const h = hashPassword(password);
     try {
       const r = await db(`INSERT INTO sr_users (name,username,pass_salt,pass_hash,role,created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,name,username,role,active,created_at`, [name, username, h.salt, h.hash, ROLE(req.body.role), w.name]);
-      await db(`INSERT INTO sr_user_log (who,target,detail) VALUES ($1,$2,$3)`, [w.name, username, `created as ${ROLE(req.body.role)}`]);
+      const took = USERS.find((u) => u.name.toLowerCase() === username.toLowerCase() || u.key.toLowerCase() === username.toLowerCase());
+      TAKEN.add(username.toLowerCase());
+      await db(`INSERT INTO sr_user_log (who,target,detail) VALUES ($1,$2,$3)`, [w.name, username, `created as ${ROLE(req.body.role)}${took ? ` — replaces built-in login ${took.name}` : ""}`]);
       res.json({ ok: true, user: r.rows[0] });
     } catch (e) { if (/unique/i.test(e.message)) return res.status(400).json({ error: `Username "${username}" is taken.` }); throw e; }
   } catch (e) { res.status(500).json({ error: e.message }); }

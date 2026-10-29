@@ -535,7 +535,7 @@
     <div class="card" style="padding:0;overflow:hidden"><div id="userList"><div class="muted center" style="padding:20px">Loading…</div></div></div>
     <div class="sectlabel">Built-in logins</div>
     <div class="card"><div id="builtinList" class="muted">…</div>
-      <div class="note" style="text-align:left;margin:10px 0 0">These come from the STOCKROOM_USERS setting on Railway and sign in with just their name. To retire one, give that person an account here, then remove them from that setting.</div></div>
+      <div class="note" style="text-align:left;margin:10px 0 0">These sign in with just their name, no password. Tap <b>Set password</b> to turn one into a real account with a password — the old name-only sign-in stops working and that device signs in again with the new password.</div></div>
     <div class="sectlabel">Recent changes</div>
     <div class="card"><div id="userLog" class="hist"><div class="muted">Nothing yet.</div></div></div>
   </section>
@@ -1524,13 +1524,13 @@ async function loadUsers(){
         <button class="btn sec sm" onclick="openUserModal(${u.id})"><i class="ti ti-pencil"></i><span class="lbl">Edit</span></button>
       </div>`).join("")
       : '<div class="muted center" style="padding:22px">No accounts yet. Add the first one with <b>Add user</b>.</div>';
-    $("builtinList").innerHTML = d.builtin.length ? '<div class="chipwrap">'+d.builtin.map(b=>`<span class="chip" style="cursor:default">${esc(b.name)} <span class="role ${b.role}" style="margin-left:4px">${b.role==="admin"?"Admin":"Staff"}</span></span>`).join("")+'</div>' : "None.";
+    $("builtinList").innerHTML = d.builtin.length ? '<div class="chipwrap">'+d.builtin.map(b=>`<span class="chip" style="cursor:default${b.replaced?";opacity:.55":""}">${esc(b.name)} ${b.replaced?'<span class="role" style="margin-left:4px">Replaced</span>':`<span class="role ${b.role}" style="margin-left:4px">${b.role==="admin"?"Admin":"Staff"}</span>`}${b.replaced?"":` <a style="color:var(--accent2);cursor:pointer;margin-left:6px;font-weight:600" onclick="openUserModal(null,${esc(JSON.stringify(b.name))},'${b.role}')">Set password</a>`}</span>`).join("")+'</div>' : "None.";
     $("userLog").innerHTML = d.log.length ? d.log.map(x=>`<div class="h"><span><b>${esc(x.target||"")}</b> <span class="muted">${esc(x.detail||"")}</span></span><span class="muted" style="white-space:nowrap">${esc(x.who||"")} · ${fmt(x.ts)}</span></div>`).join("") : '<div class="muted">Nothing yet.</div>';
   }catch(e){ el.innerHTML='<div class="muted center" style="padding:20px">Couldn\'t load users.</div>'; }
 }
 function genPassword(){ const w="abcdefghjkmnpqrstuvwxyz23456789"; let p=""; const a=new Uint32Array(10); crypto.getRandomValues(a); for(const n of a) p+=w[n%w.length]; return p; }
 function closeUserModal(){ $("userModal").classList.remove("show"); }
-function openUserModal(id){
+function openUserModal(id,preName,preRole){
   const u = id ? (USERS_DATA&&USERS_DATA.users||[]).find(x=>x.id===id) : null;
   const self = u && u.name===CURRENT_USER && HAS_ACCOUNT;
   const box=$("userBox");
@@ -1538,14 +1538,14 @@ function openUserModal(id){
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px"><h3 style="flex:1">${u?"Edit user":"Add user"}</h3><button class="btn sec sm" onclick="closeUserModal()" aria-label="Close"><i class="ti ti-x"></i></button></div>
     <div class="muted" style="font-size:13.5px">${u?`Signed in last: ${esc(fmtWhen(u.last_login))}`:"They sign in with this username and password."}</div>
     <label class="lab" for="uName">Name</label>
-    <input id="uName" data-osk="1" type="text" value="${esc(u?u.name:"")}" placeholder="e.g. Maria Lopez" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
+    <input id="uName" data-osk="1" type="text" value="${esc(u?u.name:(preName||""))}" placeholder="e.g. Maria Lopez" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
     <label class="lab" for="uUser">Username</label>
-    <input id="uUser" data-osk="1" type="text" value="${esc(u?u.username:"")}" ${u?"disabled":""} placeholder="e.g. maria" autocapitalize="off" spellcheck="false" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
+    <input id="uUser" data-osk="1" type="text" value="${esc(u?u.username:(preName?String(preName).toLowerCase():""))}" ${u?"disabled":""} placeholder="e.g. maria" autocapitalize="off" spellcheck="false" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
     <label class="lab" for="uPass">${u?"New password <span class='muted' style='font-weight:400'>(leave blank to keep)</span>":"Password"}</label>
     <div class="pwwrap" style="display:flex;gap:8px"><div class="pwwrap" style="flex:1"><input id="uPass" data-osk="1" type="text" value="${u?"":genPassword()}" placeholder="${u?"Leave blank to keep":"At least 6 characters"}" autocomplete="new-password" spellcheck="false" style="width:100%;padding:0 12px;min-height:42px;font-size:15px;font-family:var(--mono)"></div>
       <button class="btn sec" type="button" onclick="$('uPass').value=genPassword()" title="Make a new random password"><i class="ti ti-refresh"></i></button></div>
     <label class="lab">Role</label>
-    <div class="seg" id="uRole"><button type="button" data-r="staff" class="${!u||u.role!=="admin"?"on":""}" ${self?"disabled":""}>Staff</button><button type="button" data-r="admin" class="${u&&u.role==="admin"?"on":""}" ${self?"disabled":""}>Admin</button></div>
+    <div class="seg" id="uRole"><button type="button" data-r="staff" class="${(u?u.role:preRole)!=="admin"?"on":""}" ${self?"disabled":""}>Staff</button><button type="button" data-r="admin" class="${(u?u.role:preRole)==="admin"?"on":""}" ${self?"disabled":""}>Admin</button></div>
     <div class="note" style="text-align:left;margin:6px 0 0">Admins can also open this Users page.</div>
     <div class="moverow" style="margin-top:18px">
       ${u&&!self?`<button class="btn sec danger" onclick="toggleUserActive(${u.id},${!u.active})">${u.active?'<i class="ti ti-lock"></i> Turn off':'<i class="ti ti-check"></i> Turn on'}</button>`:""}
