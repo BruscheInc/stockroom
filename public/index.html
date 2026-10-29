@@ -3,18 +3,21 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<meta name="theme-color" content="#0b1220" />
+<meta name="theme-color" content="#FFFFFF" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 <title>Brusche Stockroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="icons.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
-  :root{ --bg:#0b1220; --panel:#121b2e; --panel2:#0e1626; --line:#20304a; --ink:#e8f0ff; --muted:#8ea3c4; --accent:#39d98a; --accent2:#49b6ff; --warn:#ffb454; --bad:#ff6b6b; --mono:ui-monospace,Menlo,Consolas,monospace }
+  :root{ --bg:#F4F5F7; --panel:#FFFFFF; --panel2:#F4F5F7; --line:#E5E7EB; --line2:#D1D5DB; --ink:#16151D; --ink2:#3B3944; --muted:#6D6A75; --faint:#9C99A3; --accent:#15803D; --accent2:#2563EB; --warn:#B45309; --bad:#C8372D; --honey:#FFC21A; --honey-soft:#FFF4D1; --honey-ink:#7A5600; --ok-soft:#E8F6EE; --blue-soft:#EFF4FF; --warn-soft:#FEF3E2; --bad-soft:#FDECEA; --r:9px; --r-lg:12px; --sh-1:0 1px 2px rgba(22,21,29,.05); --sh-3:0 12px 32px rgba(22,21,29,.14); --ring:0 0 0 3px rgba(37,99,235,.22); --mono:ui-monospace,Menlo,Consolas,monospace }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-text-size-adjust:100%}
   body{padding-bottom:76px}
-  header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#0d1728,#0b1220);border-bottom:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
+  header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
   header .logo{font-weight:800;letter-spacing:.02em}
   header .logo b{color:var(--accent)}
   header .who{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
@@ -24,9 +27,9 @@
   .scanbar input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px 14px;font-size:16px}
   .scanbar input:focus{outline:2px solid var(--accent2);border-color:var(--accent2)}
   button{font:inherit;cursor:pointer}
-  .btn{background:var(--accent);color:#052012;border:none;border-radius:12px;padding:0 16px;font-weight:700;font-size:15px}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0 16px;font-weight:700;font-size:15px}
   .btn.sec{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-  .btn.blue{background:var(--accent2);color:#04121f}
+  .btn.blue{background:var(--accent2);color:#fff}
   .btn.ghost{background:transparent;color:var(--accent2);border:1px solid var(--line)}
   .btn:active{transform:translateY(1px)}
   .btn.wide{width:100%;padding:14px;border-radius:12px}
@@ -39,8 +42,8 @@
   .title{font-size:19px;font-weight:800;line-height:1.2;margin:0 0 2px}
   .sub{color:var(--muted);font-size:13px}
   .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
-  .pill.bin{background:rgba(73,182,255,.16);color:var(--accent2);border:1px solid rgba(73,182,255,.35)}
-  .pill.nobin{background:rgba(255,180,84,.14);color:var(--warn);border:1px solid rgba(255,180,84,.35)}
+  .pill.bin{background:var(--blue-soft);color:var(--accent2);border:1px solid #C7D7FE}
+  .pill.nobin{background:var(--warn-soft);color:var(--warn);border:1px solid #F5D9AE}
   .itemhead{display:flex;gap:14px;align-items:center}
   .itemhead img{width:64px;height:64px;border-radius:12px;object-fit:cover;background:var(--panel2);border:1px solid var(--line)}
   .qtygrid{display:grid;grid-template-columns:1fr auto;gap:0;margin-top:6px}
@@ -57,9 +60,9 @@
   .moverow{display:flex;gap:8px;margin-top:6px}
   .moverow input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px}
   .note{color:var(--muted);font-size:13px;text-align:center;margin:8px 0}
-  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:88px;background:#08381f;color:#c9ffe4;border:1px solid #1c8a54;padding:10px 16px;border-radius:12px;font-size:14px;z-index:60;opacity:0;transition:.25s;pointer-events:none}
-  .toast.show{opacity:1} .toast.bad{background:#3a1414;color:#ffd4d4;border-color:#8a1c1c}
-  nav.tabs{position:fixed;bottom:0;left:0;right:0;background:#0c1626;border-top:1px solid var(--line);display:flex;z-index:30;padding-bottom:env(safe-area-inset-bottom)}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:88px;background:var(--ink);color:#fff;border:1px solid var(--ink);padding:10px 16px;border-radius:12px;font-size:14px;z-index:60;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1} .toast.bad{background:var(--bad);color:#fff;border-color:var(--bad)}
+  nav.tabs{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:30;padding-bottom:env(safe-area-inset-bottom)}
   nav.tabs button{flex:1;background:none;border:none;color:var(--muted);padding:11px 0 12px;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px}
   nav.tabs button .i{font-size:19px}
   nav.tabs button.on{color:var(--accent)}
@@ -73,15 +76,15 @@
   .filters{display:flex;align-items:center;gap:8px;margin:-2px 0 12px;flex-wrap:wrap}
   .chips{display:flex;gap:6px;flex:1;min-width:0}
   .chip{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 13px;font-size:13px;font-weight:600}
-  .chip.on{background:rgba(57,217,138,.16);border-color:var(--accent);color:var(--accent)}
+  .chip.on{background:var(--ok-soft);border-color:var(--accent);color:var(--accent)}
   #sort{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:13px}
   .chipwrap{display:flex;flex-wrap:wrap;gap:8px}
-  .binchip{display:inline-flex;align-items:center;gap:9px;background:rgba(73,182,255,.14);border:1px solid rgba(73,182,255,.4);color:var(--accent2);border-radius:999px;padding:9px 10px 9px 14px;font-family:var(--mono);font-size:15px;font-weight:700}
-  .binchip button{background:rgba(255,107,107,.18);border:1px solid rgba(255,107,107,.5);color:#ffb0b0;border-radius:50%;width:24px;height:24px;line-height:1;font-size:13px;padding:0;display:flex;align-items:center;justify-content:center}
+  .binchip{display:inline-flex;align-items:center;gap:9px;background:var(--blue-soft);border:1px solid #C7D7FE;color:var(--accent2);border-radius:999px;padding:9px 10px 9px 14px;font-family:var(--mono);font-size:15px;font-weight:700}
+  .binchip button{background:var(--bad-soft);border:1px solid #F3C4BF;color:var(--bad);border-radius:50%;width:24px;height:24px;line-height:1;font-size:13px;padding:0;display:flex;align-items:center;justify-content:center}
   .keyprompt{max-width:420px;margin:14vh auto;padding:0 20px;text-align:center}
   .keyprompt input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:14px;font-size:16px;margin:12px 0}
-  .oosbtn{margin-top:7px;background:rgba(255,180,84,.14);border:1px solid rgba(255,180,84,.4);color:var(--warn);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700}
-  .modal{position:fixed;inset:0;background:rgba(3,8,16,.78);z-index:80;display:none;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
+  .oosbtn{margin-top:7px;background:var(--warn-soft);border:1px solid #F5D9AE;color:var(--warn);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700}
+  .modal{position:fixed;inset:0;background:rgba(22,21,29,.38);z-index:80;display:none;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
   .modal.show{display:flex}
   .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:640px;width:100%;margin:18px 0 40px;padding:16px}
   .modal .box h3{margin:0;font-size:18px}
@@ -91,12 +94,12 @@
   .hb{background:none;border:none;color:var(--ink);font-size:22px;padding:0 8px 0 0;line-height:1;cursor:pointer}
   .drawer{position:fixed;inset:0;z-index:70;display:none}
   .drawer.show{display:block}
-  .drawer .scrim{position:absolute;inset:0;background:rgba(3,8,16,.6)}
+  .drawer .scrim{position:absolute;inset:0;background:rgba(22,21,29,.3)}
   .drawer .panel{position:absolute;top:0;left:0;bottom:0;width:284px;max-width:84vw;background:var(--panel);border-right:1px solid var(--line);padding:14px 12px calc(14px + env(safe-area-inset-bottom));overflow-y:auto}
   .menuhead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
   .menuitem{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;color:var(--ink);padding:13px 10px;border-radius:10px;font-size:15px}
   .menuitem .i{font-size:20px;width:24px;text-align:center}
-  .menuitem:active{transform:translateY(1px)} .menuitem.on{background:rgba(57,217,138,.14);color:var(--accent)}
+  .menuitem:active{transform:translateY(1px)} .menuitem.on{background:var(--honey-soft);color:var(--accent)}
   .menusec{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 6px 4px}
   /* stock verification */
   .statgrid{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
@@ -106,37 +109,37 @@
   .pager{padding:14px 4px 4px}
   .pgrow{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center}
   .pgbtn{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}
-  .pgbtn.on{background:var(--accent);border-color:var(--accent);color:#04121f}
+  .pgbtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
   .pgbtn:disabled{opacity:.4;cursor:default}
   .pgell{color:var(--muted);padding:0 2px}
   .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
   .keypad button{padding:18px 0;font-size:21px;font-weight:800;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;-webkit-user-select:none;user-select:none}
-  .keypad button:active{background:var(--accent);color:#052012}
+  .keypad button:active{background:var(--accent);color:#fff}
   .keypad button.wide{font-size:15px;font-weight:700;color:var(--muted)}
   /* on-screen keyboard — iOS dark-appearance replica (a scanner makes iOS suppress its own keyboard) */
-  .oskfab{position:fixed;right:14px;bottom:74px;z-index:60;background:var(--accent);color:#052012;border:none;border-radius:50%;width:54px;height:54px;font-size:23px;box-shadow:0 4px 14px rgba(0,0,0,.45);display:none}
+  .oskfab{position:fixed;right:14px;bottom:74px;z-index:60;background:var(--accent);color:#fff;border:none;border-radius:50%;width:54px;height:54px;font-size:23px;box-shadow:0 4px 14px rgba(0,0,0,.45);display:none}
   .oskfab.show{display:block}
-  .osk{position:fixed;left:0;right:0;bottom:0;z-index:95;background:#1b1b1d;display:none;
-       padding:8px 3px calc(4px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(0,0,0,.5);
+  .osk{position:fixed;left:0;right:0;bottom:0;z-index:95;background:#D1D3D9;display:none;
+       padding:8px 3px calc(4px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(22,21,29,.12);
        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
        -webkit-user-select:none;user-select:none;touch-action:manipulation}
   .osk.show{display:block}
   .osk .oskbar{display:flex;align-items:center;gap:10px;padding:2px 9px 8px;font-size:12px;color:#8e8e93}
-  .osk .oskbar .val{flex:1;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;direction:ltr;text-align:left;unicode-bidi:plaintext}
+  .osk .oskbar .val{flex:1;color:#16151D;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;direction:ltr;text-align:left;unicode-bidi:plaintext}
   .osk .oskbar .done{background:none;border:none;color:#0a84ff;font-size:16px;font-weight:600;padding:2px 4px}
   .osk .oskrow{display:flex;gap:6px;margin:0 0 11px;align-items:stretch}
   .osk .oskrow:last-child{margin-bottom:2px}
-  .osk .k{flex:1 1 0;min-width:0;height:44px;border:none;border-radius:5px;background:#6b6b6e;color:#fff;
-          font-size:24px;font-weight:400;line-height:1;box-shadow:0 1px 0 rgba(0,0,0,.45);padding:0;
+  .osk .k{flex:1 1 0;min-width:0;height:44px;border:none;border-radius:5px;background:#fff;color:#000;
+          font-size:24px;font-weight:400;line-height:1;box-shadow:0 1px 0 rgba(0,0,0,.3);padding:0;
           font-family:inherit;display:flex;align-items:center;justify-content:center}
-  .osk .k.fn{background:#464649;font-size:16px;font-weight:500;flex:1.5 1 0}
+  .osk .k.fn{background:#ABB0BA;font-size:16px;font-weight:500;flex:1.5 1 0}
   .osk .k.space{flex:5 1 0;font-size:15px}
   .osk .k.go{background:#0a84ff;flex:2 1 0;font-size:16px;font-weight:600}
-  .osk .k.on{background:#e9e9eb;color:#1b1b1d}
-  .osk .k:active{background:#464649}
-  .osk .k.fn:active,.osk .k.space:active{background:#6b6b6e}
+  .osk .k.on{background:#fff;color:#000}
+  .osk .k:active{background:#ABB0BA}
+  .osk .k.fn:active,.osk .k.space:active{background:#fff}
   .osk .sp{flex:.5 1 0}
-  .pop{position:fixed;z-index:96;background:#6b6b6e;color:#fff;border-radius:8px;padding:6px 0;
+  .pop{position:fixed;z-index:96;background:#fff;color:#000;border-radius:8px;padding:6px 0;
             min-width:44px;text-align:center;font-size:30px;pointer-events:none;box-shadow:0 3px 10px rgba(0,0,0,.5);display:none}
   .vfilters{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
   .vrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -152,9 +155,9 @@
   .vitem .vname{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .vitem .vsub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .vbadge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;white-space:nowrap}
-  .vbadge.never{background:rgba(255,180,84,.16);color:var(--warn)}
-  .vbadge.ok{background:rgba(57,217,138,.16);color:var(--accent)}
-  .vbadge.disc{background:rgba(255,107,107,.16);color:#ffb0b0}
+  .vbadge.never{background:var(--warn-soft);color:var(--warn)}
+  .vbadge.ok{background:var(--ok-soft);color:var(--accent)}
+  .vbadge.disc{background:var(--bad-soft);color:var(--bad)}
   /* last-verified line + quantity activity + adjust */
   .verline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin-top:8px}
   .vtag{font-size:11.5px;font-weight:700;white-space:normal;overflow-wrap:anywhere}
@@ -166,7 +169,7 @@
   .act .chg.down{color:var(--bad)} .act .chg.up{color:var(--accent)}
   .reasons{display:flex;flex-wrap:wrap;gap:6px}
   .reasons button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:8px 13px;font-size:13px;font-weight:600}
-  .reasons button.on{background:rgba(57,217,138,.16);border-color:var(--accent);color:var(--accent)}
+  .reasons button.on{background:var(--ok-soft);border-color:var(--accent);color:var(--accent)}
   .stepper{display:flex;align-items:center;justify-content:center;gap:14px;margin:4px 0}
   .stepper .btn{font-size:26px;width:58px;height:58px;padding:0}
   .stepper input{width:120px;font-size:36px;font-weight:800;text-align:center;padding:8px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:12px}
@@ -175,6 +178,142 @@
   .invtbl tr.inact td{opacity:.55}
   .invsum{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:6px}
   .invsum b{color:var(--ink)}
+  /* ================= Buzzin look ================= white sheets, Figtree, Tabler icons, honey accents. */
+  html,body{font-family:"Figtree",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
+  ::selection{background:rgba(255,194,26,.35)}
+  h1,h2,h3{letter-spacing:-.015em}
+  .ti{font-size:17px}
+  /* top bar */
+  header.top{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:12px;height:calc(56px + env(safe-area-inset-top));padding:env(safe-area-inset-top) 14px 0;background:#fff;border-bottom:0;box-shadow:0 1px 0 var(--line)}
+  .logo{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:16px;letter-spacing:-.015em;color:var(--ink)}
+  .logo .mark{width:30px;height:30px;border-radius:9px;background:var(--honey);color:var(--ink);display:grid;place-items:center;box-shadow:0 1px 2px rgba(122,86,0,.25)}
+  .logo .mark .ti{font-size:18px}
+  .logo.big{font-size:22px;justify-content:center;margin-bottom:18px}.logo.big .mark{width:40px;height:40px;border-radius:12px}.logo.big .mark .ti{font-size:24px}
+  .crumb{color:var(--muted);font-size:14px;padding-left:12px;border-left:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hb{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:9px;background:none;border:0;color:var(--ink);padding:0;font-size:20px}
+  .hb:hover{background:#F3F4F6}.hb .ti{font-size:21px}
+  .av{width:34px;height:34px;border-radius:50%;border:0;background:var(--honey);color:var(--ink);font-weight:800;font-size:12.5px;display:grid;place-items:center;padding:0;box-shadow:0 0 0 2px #fff,0 0 0 3px var(--line)}
+  .acct{position:absolute;right:12px;top:calc(52px + env(safe-area-inset-top));width:240px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh-3);padding:6px;z-index:90;animation:bzpop .12s ease}
+  .acct[hidden]{display:none}
+  .acct .me{display:flex;flex-direction:column;padding:8px 10px 10px;border-bottom:1px solid var(--line);margin-bottom:4px}.acct .me span{font-size:12.5px}
+  .acct a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--ink2);text-decoration:none;font-size:14px}
+  .acct a:hover{background:#F3F4F6;color:var(--ink)}
+  @keyframes bzpop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+  /* buttons — dark primary, white secondary (Buzzin) */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;background:var(--ink);color:#fff;border:1px solid var(--ink);border-radius:var(--r);font-weight:600;font-size:14px;box-shadow:0 1px 2px rgba(22,21,29,.25);transition:background .12s,border-color .12s,box-shadow .12s,transform .06s}
+  .btn:hover{background:#2A2833}
+  .btn:active{transform:translateY(.5px)}
+  .btn:focus-visible{outline:none;box-shadow:var(--ring)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.sec,.btn.blue,.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);box-shadow:var(--sh-1)}
+  .btn.sec:hover,.btn.blue:hover,.btn.ghost:hover{background:#F3F4F6;border-color:var(--line2)}
+  .btn.sm{min-height:34px;padding:0 12px;font-size:13.5px}
+  .btn.wide{border-radius:var(--r)}
+  .btn.danger{color:var(--bad)}
+  /* inputs */
+  input[type=text],input[type=search],input[type=number],input[type=password],input[type=date],input:not([type]),select,textarea{background:#fff!important;border:1px solid var(--line)!important;color:var(--ink)!important;border-radius:var(--r)!important;font-family:inherit;transition:border-color .12s,box-shadow .12s}
+  input:hover,select:hover,textarea:hover{border-color:var(--line2)!important}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent2)!important;box-shadow:var(--ring)!important;outline:none!important}
+  input::placeholder,textarea::placeholder{color:var(--faint)}
+  select{min-height:36px}
+  input[type=checkbox],input[type=radio]{accent-color:var(--accent2)}
+  .scanbar input{min-height:48px}
+  .lab{display:block;font-size:12.5px;font-weight:600;color:var(--ink2);margin:12px 0 5px}
+  /* sheets */
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1)}
+  .ph{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:0 0 3px}
+  .phsub{color:var(--muted);font-size:14px;margin:0 0 12px}
+  .title{font-size:20px;letter-spacing:-.02em}
+  .sectlabel{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--faint)}
+  th{text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:600;color:var(--muted)}
+  td{border-bottom-color:var(--line)}
+  tbody tr:last-child td{border-bottom:0}
+  tr[onclick]:hover td{background:#F8F9FA}
+  .note{color:var(--muted)}
+  .ready{display:inline-flex;align-items:center;gap:6px;color:var(--accent);font-weight:700;margin-right:4px}
+  .ready:before{content:"";width:8px;height:8px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px #DCFCE7}
+  /* pills, chips, badges */
+  .pill{font-weight:600;font-size:12px;padding:3px 9px}
+  .pill.bin{background:var(--blue-soft);color:#1D4ED8;border:1px solid #C7D7FE}
+  .pill.nobin{background:var(--warn-soft);color:var(--warn);border:1px solid #F5D9AE}
+  .pill .ti,.binchip .ti,.vtag .ti{font-size:14px}
+  .chip{background:#fff;color:var(--ink2);border:1px solid var(--line);font-weight:600}
+  .chip:hover{border-color:var(--line2)}
+  .chip.on{background:var(--honey-soft);border-color:#F2D27A;color:var(--honey-ink)}
+  .binchip{background:var(--blue-soft);border-color:#C7D7FE;color:#1D4ED8}
+  .binchip button{background:#fff;border:1px solid #F3C4BF;color:var(--bad)}.binchip button .ti{font-size:13px}
+  .reasons button{background:#fff;color:var(--ink2)}
+  .reasons button.on{background:var(--honey-soft);border-color:#F2D27A;color:var(--honey-ink)}
+  .oosbtn{display:inline-flex;align-items:center;gap:5px}
+  .stat{background:#fff;box-shadow:var(--sh-1)}.stat .n{font-size:21px;letter-spacing:-.02em}
+  .pgbtn{background:#fff}.pgbtn.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .keypad button{background:#fff;box-shadow:var(--sh-1)}
+  .keypad button:active{background:var(--ink);color:#fff}
+  .stepper input{background:#fff!important}
+  .vfilters{background:#fff;box-shadow:var(--sh-1)}
+  .arrow{color:var(--faint)}
+  /* modals + toast */
+  .modal .box{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-3)}
+  .modal .box.narrow{max-width:440px}
+  .modal .box h3{font-size:18px;letter-spacing:-.015em}
+  .toast{border-radius:12px;box-shadow:var(--sh-3);padding:11px 18px;font-weight:500}
+  .oskfab{background:var(--ink);color:#fff;box-shadow:var(--sh-3)}.oskfab .ti{font-size:24px}
+  /* sign-in */
+  .keyprompt{max-width:400px;margin:12vh auto;padding:0 16px;text-align:left}
+  .keyprompt .login{padding:24px 24px 20px}
+  .keyprompt h2{margin:0 0 4px;font-size:22px}
+  .keyprompt input{margin:0;min-height:46px;padding:0 12px;font-size:16px;width:100%}
+  .keyprompt .btn{margin-top:18px;min-height:46px}
+  .pwwrap{position:relative}.pwwrap input{padding-right:44px!important}
+  .pweye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:38px;height:38px;border:0;background:none;color:var(--muted);border-radius:8px;display:grid;place-items:center}
+  .pweye:hover{background:#F3F4F6}
+  /* side menu (drawer on phones, fixed sheet on desktop) */
+  .drawer .scrim{background:rgba(22,21,29,.3)}
+  .drawer .panel{width:248px;background:#fff;border-right:1px solid var(--line);padding:14px 12px calc(14px + env(safe-area-inset-bottom));box-shadow:var(--sh-3)}
+  .menuhead{margin:0 0 10px;padding:0 2px}
+  .menuwho{font-size:12.5px;color:var(--muted);padding:0 10px 6px}.menuwho b{color:var(--ink)}
+  .menusec{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--faint);margin:16px 10px 6px}
+  .menuitem{gap:10px;padding:9px 10px;border-radius:8px;font-size:14px;color:var(--ink2);transition:background .12s,color .12s}
+  .menuitem .ti{font-size:18px;color:var(--muted)}
+  .menuitem:hover{background:#F3F4F6;color:var(--ink)}
+  .menuitem.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:var(--sh-1),inset 0 0 0 1px var(--line)}
+  .menuitem.on .ti{color:var(--honey-ink)}
+  /* bottom tabs (phones) */
+  nav.tabs{box-shadow:0 -1px 0 var(--line);border-top:0}
+  nav.tabs button{color:var(--muted);font-weight:600;padding:8px 0 10px;gap:2px}
+  nav.tabs button .i{display:grid;place-items:center;width:52px;height:30px;border-radius:999px;font-size:21px;transition:background .15s}
+  nav.tabs button .i .ti{font-size:21px}
+  nav.tabs button.on{color:var(--ink)}
+  nav.tabs button.on .i{background:var(--honey-soft);color:var(--honey-ink)}
+  /* users page */
+  .urow{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .urow:last-child{border-bottom:0}
+  .urow .uav{width:36px;height:36px;border-radius:50%;background:var(--honey-soft);color:var(--honey-ink);font-weight:800;font-size:12.5px;display:grid;place-items:center;flex:none}
+  .urow.off{opacity:.55}
+  .urow .meta{flex:1;min-width:0}.urow .nm{font-weight:700}.urow .sm{font-size:12.5px;color:var(--muted)}
+  .role{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:#F3F4F6;color:var(--ink2);white-space:nowrap}
+  .role.admin{background:var(--honey-soft);color:var(--honey-ink)}
+  .seg{display:inline-flex;background:#F3F4F6;border-radius:10px;padding:3px;gap:2px}
+  .seg button{border:0;background:none;border-radius:8px;padding:7px 14px;font-weight:600;color:var(--muted)}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:var(--sh-1)}
+  .moverow input,.scanbar input{min-width:0}
+  .moverow>.btn,.scanbar>.btn{flex:none}
+  .vrow label[style*=margin-left]{margin-left:0!important}
+  .mobonly{}
+  .lbl{}
+  @media (max-width:520px){ #refreshBtn .lbl{display:none} #refreshBtn{width:36px;padding:0} .crumb{display:none} }
+  @media (min-width:900px){
+    body{padding-left:248px;padding-bottom:32px}
+    header.top .hb{display:none}
+    .drawer{display:block;position:fixed;top:calc(56px + env(safe-area-inset-top));left:0;bottom:0;right:auto;width:248px;z-index:30}
+    .drawer .scrim,.drawer .menuhead,.mobonly{display:none!important}
+    .drawer .panel{position:static;height:100%;width:248px;max-width:none;box-shadow:none}
+    header.top{margin-left:-248px;padding-left:20px}
+    nav.tabs{display:none}
+    .wrap{max-width:920px;padding:24px 28px 0}
+    .toast{bottom:28px}
+    .oskfab{bottom:24px}
+  }
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -187,19 +326,34 @@
 <body>
 
 <div id="keygate" class="keyprompt hidden">
-  <h2>Brusche Stockroom</h2>
-  <p class="muted" id="gateMsg">Enter your username to sign in.</p>
-  <input id="keyInput" data-osk="1" inputmode="none" placeholder="username" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')saveKey()" />
-  <button class="btn wide" onclick="saveKey()">Sign in</button>
+  <div class="logo big"><span class="mark"><i class="ti ti-building-warehouse"></i></span>Stockroom</div>
+  <div class="card login">
+    <h2>Sign in</h2>
+    <p class="muted" id="gateMsg">Brusche warehouse — bins, stock and pick lists.</p>
+    <label class="lab" for="keyInput">Username</label>
+    <input id="keyInput" data-osk="1" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')$('pwInput').focus()" />
+    <label class="lab" for="pwInput">Password</label>
+    <div class="pwwrap"><input id="pwInput" data-osk="1" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')saveKey()" /><button type="button" class="pweye" onclick="pwPeek('pwInput',this)" aria-label="Show password"><i class="ti ti-eye"></i></button></div>
+    <button class="btn wide" id="loginBtn" onclick="saveKey()">Sign in</button>
+    <div class="note" style="margin:12px 0 0">Built-in logins (like Warehouse) can leave the password blank.</div>
+  </div>
 </div>
 
 <div id="appwrap" class="hidden">
-<header>
-  <button class="hb" onclick="openMenu()" aria-label="Menu">☰</button>
-  <div class="logo">📦 <b>Stockroom</b></div>
-  <div class="who">👤 <b id="whoName" style="color:var(--ink)">…</b> <a href="#" onclick="signOut();return false" style="color:var(--muted);margin-left:8px;font-size:12px">sign out</a></div>
+<header class="top">
+  <button class="hb" onclick="openMenu()" aria-label="Menu"><i class="ti ti-menu-2"></i></button>
+  <div class="logo"><span class="mark"><i class="ti ti-building-warehouse"></i></span>Stockroom</div>
+  <span class="crumb" id="pageTitle">Scan</span>
+  <span style="flex:1"></span>
+  <button class="btn sec sm" id="refreshBtn" onclick="refreshNow()" title="Refresh"><i class="ti ti-refresh"></i><span class="lbl">Refresh</span></button>
+  <button class="av" id="avBtn" type="button" onclick="toggleAcct(event)" title="Account"><span id="avIni">·</span></button>
+  <div class="acct" id="acctMenu" hidden>
+    <div class="me"><b id="whoName">…</b><span id="whoRole" class="muted"></span></div>
+    <a href="#" onclick="openPwModal();return false"><i class="ti ti-key"></i>Change password</a>
+    <a href="#" class="adminonly hidden" onclick="closeAcct();goTab('users');return false"><i class="ti ti-users"></i>Users</a>
+    <a href="#" onclick="signOut();return false"><i class="ti ti-logout"></i>Sign out</a>
+  </div>
 </header>
-<div class="topbar"><button class="btn blue" id="refreshBtn" onclick="refreshNow()">⟳ Refresh</button></div>
 
 <div class="wrap">
   <!-- SCAN TAB -->
@@ -208,9 +362,9 @@
       <input id="scan" data-osk="1" inputmode="none" placeholder="Scan, or tap to type SKU / UPC / bin…" autocomplete="off" autocapitalize="off" spellcheck="false" />
       <button class="btn" onclick="submitScan()">Go</button>
     </div>
-    <button class="btn blue wide" id="camBtn" onclick="toggleCamera()">📷 Scan with camera</button>
+    <button class="btn blue wide" id="camBtn" onclick="toggleCamera()"><i class="ti ti-camera"></i> Scan with camera</button>
     <div id="reader"></div>
-    <div class="note" id="scanNote"><span style="color:var(--accent)">● Ready to scan</span> — pull the scanner trigger anytime, tap 📷 for the camera, or tap the box to type.</div>
+    <div class="note" id="scanNote"><span class="ready">Ready to scan</span> Pull the scanner trigger anytime, use the camera, or tap the box to type.</div>
     <div id="result"></div>
   </section>
 
@@ -220,8 +374,8 @@
       <input id="newBin" data-osk="1" inputmode="none" placeholder="New bin code (e.g. A-01-3)" autocomplete="off" />
       <button class="btn" onclick="addBin()">Add</button>
     </div>
-    <button class="btn ghost wide" id="syncBtn" onclick="syncSS()">⟳ Import existing bins from ShipStation</button>
-    <button class="btn ghost wide" style="margin-top:8px" onclick="BRO.clear();showTab('binreport')">📉 Bin fill report (emptiest first)</button>
+    <button class="btn ghost wide" id="syncBtn" onclick="syncSS()"><i class="ti ti-cloud-download"></i> Import existing bins from ShipStation</button>
+    <button class="btn ghost wide" style="margin-top:8px" onclick="BRO.clear();showTab('binreport')"><i class="ti ti-chart-bar"></i> Bin fill report (emptiest first)</button>
     <input id="binFilter" data-osk="1" inputmode="none" placeholder="Filter bins…" autocomplete="off" oninput="renderBinList()" style="width:100%;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:12px;font-size:15px" />
     <div class="sectlabel">Bins</div>
     <div class="binlist card" id="binlist"><div class="muted center">Loading…</div></div>
@@ -254,7 +408,7 @@
       <input id="orderScan" data-osk="1" inputmode="none" placeholder="Scan or type order # (e.g. LBO8958)…" autocomplete="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')submitOrder()" />
       <button class="btn" onclick="submitOrder()">Go</button>
     </div>
-    <button class="btn blue wide" id="ocamBtn" onclick="toggleOrderCamera()">📷 Scan packing-slip barcode</button>
+    <button class="btn blue wide" id="ocamBtn" onclick="toggleOrderCamera()"><i class="ti ti-camera"></i> Scan packing-slip barcode</button>
     <div id="oreader"></div>
     <div class="note" id="orderNote">Scan the barcode at the bottom of a packing slip, or type the order number, to see where every item is and how many to pick.</div>
     <div id="orderResult"></div>
@@ -266,7 +420,7 @@
     <div class="vfilters">
       <div class="vrow">
         <input id="vq" data-osk="1" inputmode="none" placeholder="Search SKU or name…" autocomplete="off" onkeydown="if(event.key==='Enter')loadStockList()" style="flex:1;min-width:130px">
-        <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot">📊 Sync</button>
+        <button class="btn blue" id="vsyncBtn" onclick="syncInventory()" title="Refresh Shopify on-hand snapshot"><i class="ti ti-refresh"></i> Sync</button>
       </div>
       <div class="vrow">
         <label>On hand</label>
@@ -294,7 +448,7 @@
         </select>
       </div>
       <div class="vrow">
-        <button class="btn wide" onclick="loadStockList()">🔎 Apply filters</button>
+        <button class="btn wide" onclick="loadStockList()"><i class="ti ti-filter"></i> Apply filters</button>
       </div>
     </div>
     <div id="vlist" class="card"><div class="muted center">Loading…</div></div>
@@ -320,7 +474,7 @@
   </section>
   <section id="tab-strays" class="hidden">
     <div class="card" style="margin-bottom:10px">
-      <div class="sectlabel" style="margin-top:0">🔄 Strays — put back</div>
+      <h1 class="ph">Strays</h1><div class="phsub">Put back wrong picks, found items and sellable returns.</div>
       <div class="note" style="text-align:left;margin:0 0 10px">Wrong picks, found items, or sellable returns going back into bins. Scan or type the item, then put it back. Items under 3 on hand must be recounted so the number stays exact.</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <input id="strayScan" data-osk="1" inputmode="none" placeholder="Scan or type SKU / name…" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')strayLookup()" style="flex:1;min-width:150px">
@@ -333,7 +487,7 @@
   </section>
   <section id="tab-binreport" class="hidden">
     <div class="card" style="margin-bottom:10px">
-      <div class="sectlabel" style="margin-top:0">📉 Bin fill report</div>
+      <h1 class="ph">Bin fill report</h1>
       <div class="note" style="text-align:left;margin:0 0 10px">Every bin with what's in it. Quantity is Shopify on hand (active listings, all stores). Use it to clear near-empty bins and condense.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="muted" style="font-size:13px">Sort
@@ -347,9 +501,9 @@
         <button class="chip on" id="brVBins" onclick="brView('bins')">Bins</button>
         <button class="chip" id="brVMove" onclick="brView('move')">Move list</button>
         <span style="flex:1"></span>
-        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="loadBinReport(true)">⟳</button>
-        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brCsv()">⬇ CSV</button>
-        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brPrint()">🖨️ Print</button>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="loadBinReport(true)" title="Reload"><i class="ti ti-refresh"></i></button>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brCsv()"><i class="ti ti-download"></i> CSV</button>
+        <button class="btn ghost" style="padding:6px 12px;font-size:13px" onclick="brPrint()"><i class="ti ti-printer"></i> Print</button>
       </div>
       <div id="brMoveOpts" class="hidden" style="margin-top:10px"><label class="muted" style="font-size:13px">Everything in the
         <input id="brMoveN" type="number" min="1" value="20" oninput="renderBinReport()" style="width:64px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
@@ -360,7 +514,7 @@
   </section>
   <section id="tab-activity" class="hidden">
     <div class="card" style="margin-bottom:10px">
-      <div class="sectlabel" style="margin-top:0">🧮 Quantity activity</div>
+      <h1 class="ph">Quantity activity</h1>
       <div class="note" style="text-align:left;margin:0 0 10px">Every time stock goes down or up: shipped orders (from ShipStation), adjustments, and verification corrections — with who, when and why.</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="actq" data-osk="1" inputmode="none" placeholder="SKU, name or order #…" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')loadActivity()" style="flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:10px;font-size:15px">
@@ -370,13 +524,27 @@
     </div>
     <div id="actList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-users" class="hidden">
+    <div class="card">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px"><h1 class="ph">Users</h1><div class="phsub" style="margin:0">Who can sign in to Stockroom. Admins can add people, reset passwords and turn accounts off.</div></div>
+        <button class="btn" onclick="openUserModal()"><i class="ti ti-user-plus"></i> Add user</button>
+      </div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden"><div id="userList"><div class="muted center" style="padding:20px">Loading…</div></div></div>
+    <div class="sectlabel">Built-in logins</div>
+    <div class="card"><div id="builtinList" class="muted">…</div>
+      <div class="note" style="text-align:left;margin:10px 0 0">These come from the STOCKROOM_USERS setting on Railway and sign in with just their name. To retire one, give that person an account here, then remove them from that setting.</div></div>
+    <div class="sectlabel">Recent changes</div>
+    <div class="card"><div id="userLog" class="hist"><div class="muted">Nothing yet.</div></div></div>
+  </section>
 </div>
 
 <nav class="tabs">
-  <button id="nav-scan" class="on" onclick="goTab('scan')"><span class="i">🔍</span>Scan</button>
-  <button id="nav-order" onclick="goTab('order')"><span class="i">🧾</span>Pick List</button>
-  <button id="nav-bins" onclick="goTab('bins')"><span class="i">🗄️</span>Bins</button>
-  <button id="nav-search" onclick="goTab('search')"><span class="i">📋</span>Items</button>
+  <button id="nav-scan" class="on" onclick="goTab('scan')"><span class="i"><i class="ti ti-scan"></i></span>Scan</button>
+  <button id="nav-order" onclick="goTab('order')"><span class="i"><i class="ti ti-receipt"></i></span>Pick List</button>
+  <button id="nav-bins" onclick="goTab('bins')"><span class="i"><i class="ti ti-building-warehouse"></i></span>Bins</button>
+  <button id="nav-search" onclick="goTab('search')"><span class="i"><i class="ti ti-list-search"></i></span>Items</button>
 </nav>
 </div>
 
@@ -386,36 +554,41 @@
 <div class="modal" id="verifyModal"><div class="box" id="verifyBox"></div></div>
 <div class="modal" id="putbackModal"><div class="box" id="putbackBox"></div></div>
 <div class="modal" id="adjustModal"><div class="box" id="adjustBox"></div></div>
-<button class="oskfab" id="oskFab" onclick="oskOpen()" title="On-screen keyboard">⌨️</button>
+<div class="modal" id="userModal"><div class="box narrow" id="userBox"></div></div>
+<div class="modal" id="pwModal"><div class="box narrow" id="pwBox"></div></div>
+<button class="oskfab" id="oskFab" onclick="oskOpen()" title="On-screen keyboard"><i class="ti ti-keyboard"></i></button>
 <div class="osk" id="osk"></div>
 <div class="pop" id="oskPop"></div>
 <div class="drawer" id="drawer">
   <div class="scrim" onclick="closeMenu()"></div>
   <div class="panel">
-    <div class="menuhead"><div class="logo">📦 <b>Stockroom</b></div><div style="flex:1"></div><button class="hb" onclick="closeMenu()">✕</button></div>
-    <div class="sub" style="color:var(--muted);font-size:12px;margin:0 6px 4px">Signed in as <b id="menuUser" style="color:var(--ink)"></b></div>
-    <div class="menusec">Functions</div>
-    <button class="menuitem" data-tab="scan" onclick="menuGo('scan')"><span class="i">🔍</span> Scan</button>
-    <button class="menuitem" data-tab="order" onclick="menuGo('order')"><span class="i">🧾</span> Pick List</button>
-    <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><span class="i">📊</span> Stock Verification</button>
-    <button class="menuitem" data-tab="strays" onclick="menuGo('strays')"><span class="i">🔄</span> Strays</button>
-    <button class="menuitem" data-tab="activity" onclick="menuGo('activity')"><span class="i">🧮</span> Quantity activity</button>
-    <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><span class="i">📦</span> Overstock</button>
-    <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><span class="i">🗄️</span> Bins</button>
-    <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><span class="i">📉</span> Bin fill report</button>
-    <button class="menuitem" data-tab="search" onclick="menuGo('search')"><span class="i">📋</span> Items</button>
-    <div class="menusec">Actions</div>
-    <button class="menuitem" onclick="closeMenu();refreshNow()"><span class="i">⟳</span> Refresh</button>
-    <button class="menuitem" onclick="closeMenu();showTab('bins');syncSS()"><span class="i">📥</span> Import bins (ShipStation)</button>
-    <button class="menuitem" onclick="closeMenu();syncInventory()"><span class="i">📊</span> Sync inventory (Shopify)</button>
-    <button class="menuitem" onclick="signOut()"><span class="i">🚪</span> Sign out</button>
+    <div class="menuhead"><div class="logo"><span class="mark"><i class="ti ti-building-warehouse"></i></span>Stockroom</div><div style="flex:1"></div><button class="hb" onclick="closeMenu()" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <div class="menuwho">Signed in as <b id="menuUser"></b></div>
+    <div class="menusec">Warehouse</div>
+    <button class="menuitem" data-tab="scan" onclick="menuGo('scan')"><i class="ti ti-scan"></i>Scan</button>
+    <button class="menuitem" data-tab="order" onclick="menuGo('order')"><i class="ti ti-receipt"></i>Pick list</button>
+    <button class="menuitem" data-tab="strays" onclick="menuGo('strays')"><i class="ti ti-arrow-back-up"></i>Strays</button>
+    <button class="menuitem" data-tab="overstock" onclick="menuGo('overstock')"><i class="ti ti-package"></i>Overstock</button>
+    <div class="menusec">Stock</div>
+    <button class="menuitem" data-tab="search" onclick="menuGo('search')"><i class="ti ti-list-search"></i>Items</button>
+    <button class="menuitem" data-tab="verify" onclick="menuGo('verify')"><i class="ti ti-clipboard-check"></i>Stock verification</button>
+    <button class="menuitem" data-tab="activity" onclick="menuGo('activity')"><i class="ti ti-history"></i>Quantity activity</button>
+    <div class="menusec">Bins</div>
+    <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><i class="ti ti-building-warehouse"></i>Bins</button>
+    <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><i class="ti ti-chart-bar"></i>Bin fill report</button>
+    <div class="menusec adminonly hidden">Admin</div>
+    <button class="menuitem adminonly hidden" data-tab="users" onclick="menuGo('users')"><i class="ti ti-users"></i>Users</button>
+    <div class="menusec">Sync</div>
+    <button class="menuitem" onclick="closeMenu();showTab('bins');syncSS()"><i class="ti ti-cloud-download"></i>Import bins (ShipStation)</button>
+    <button class="menuitem" onclick="closeMenu();syncInventory()"><i class="ti ti-refresh"></i>Sync inventory (Shopify)</button>
+    <button class="menuitem mobonly" onclick="signOut()"><i class="ti ti-logout"></i>Sign out</button>
   </div>
 </div>
 <div id="printArea"></div>
 
 <script>
 /* ---------- key / state ---------- */
-const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("key"); if(u){localStorage.setItem("sk_key",u);return u;} return localStorage.getItem("sk_key")||""; }catch(e){ return ""; } })();
+const KEY = (function(){ try{ const u=new URLSearchParams(location.search).get("key"); if(u){ localStorage.setItem("sk_key",u); history.replaceState(null,"",location.pathname); return u; } return localStorage.getItem("sk_key")||""; }catch(e){ return ""; } })();
 const $ = (id)=>document.getElementById(id);
 // Touch devices (phones/tablets): don't force-hold focus on the scan box, or iOS keeps its keyboard
 // toolbar ("Done" bar) on screen. Camera is the primary input here; tap the box only when typing.
@@ -423,15 +596,33 @@ const $ = (id)=>document.getElementById(id);
 // a Bluetooth scanner (which iOS treats as a hardware keyboard) connects — unlike pointer:coarse, which
 // flips to "fine" the moment a scanner pairs and used to make the app hide its in-app keypads.
 const IS_TOUCH = (Number(navigator.maxTouchPoints) || 0) > 0 || (window.matchMedia && matchMedia("(pointer:coarse)").matches) || ("ontouchstart" in window);
-function saveKey(){ const v=$("keyInput").value.trim(); if(!v)return; try{localStorage.setItem("sk_key",v);}catch(e){} location.href=location.pathname+"?key="+encodeURIComponent(v); }
-function signOut(){ try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
+// Sign in: username + password → a session key kept on this device (never in the address bar).
+async function saveKey(){
+  const username=$("keyInput").value.trim(), password=$("pwInput").value;
+  if(!username){ $("keyInput").focus(); return; }
+  const b=$("loginBtn"); b.disabled=true; b.textContent="Signing in…";
+  try{
+    const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})});
+    const d=await r.json();
+    if(!r.ok||!d.key){ $("gateMsg").innerHTML='<span style="color:var(--bad)">'+esc(d.error||"Couldn't sign in.")+'</span>'; b.disabled=false; b.textContent="Sign in"; return; }
+    try{ localStorage.setItem("sk_key",d.key); }catch(e){}
+    location.href=location.pathname;
+  }catch(e){ $("gateMsg").textContent="No connection — try again."; b.disabled=false; b.textContent="Sign in"; }
+}
+async function signOut(){ try{ await fetch("/api/logout?key="+encodeURIComponent(KEY),{method:"POST"}); }catch(e){} try{localStorage.removeItem("sk_key");}catch(e){} location.href=location.pathname; }
+function pwPeek(id,btn){ const i=$(id); if(!i) return; const show=i.type==="password"; i.type=show?"text":"password"; btn.innerHTML=`<i class="ti ti-${show?"eye-off":"eye"}"></i>`; }
+let CURRENT_ROLE="", HAS_ACCOUNT=false;
+const initials=(n)=>String(n||"").trim().split(/\s+/).map(w=>w[0]||"").join("").slice(0,2).toUpperCase()||"·";
+function toggleAcct(e){ e&&e.stopPropagation(); const m=$("acctMenu"); m.hidden=!m.hidden; }
+function closeAcct(){ $("acctMenu").hidden=true; }
+document.addEventListener("click",(e)=>{ if(!e.target.closest("#acctMenu")&&!e.target.closest("#avBtn")){ const m=$("acctMenu"); if(m) m.hidden=true; } });
 let CURRENT_USER="";
 function whoName(){ return CURRENT_USER; }
 let currentView=null; // {kind:'bin',key} — drives live auto-refresh of shared views
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const tokens=(loc)=>String(loc||"").split(",").map(s=>s.trim()).filter(Boolean);
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2200); }
-async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("Unauthorized — check access key",true); throw new Error("401"); } return r.json(); }
+async function api(p,opts){ opts=opts||{}; const u=p+(p.includes("?")?"&":"?")+"key="+encodeURIComponent(KEY); const r=await fetch(u,opts); if(r.status===401){ toast("You've been signed out — sign in again",true); setTimeout(()=>{ try{localStorage.removeItem("sk_key");}catch(_){} location.href=location.pathname; },1500); throw new Error("401"); } return r.json(); }
 
 if(!KEY){ $("keygate").classList.remove("hidden"); }
 else {
@@ -439,9 +630,11 @@ else {
     let role=null;
     try{ role=await (await fetch("/api/role?key="+encodeURIComponent(KEY))).json(); }catch(e){}
     if(role && role.ok){
-      CURRENT_USER = role.user || "";
+      CURRENT_USER = role.user || ""; CURRENT_ROLE = role.role || "staff"; HAS_ACCOUNT = !!role.account;
       $("appwrap").classList.remove("hidden");
-      $("whoName").textContent = CURRENT_USER;
+      $("whoName").textContent = CURRENT_USER; $("whoRole").textContent = CURRENT_ROLE==="admin"?"Admin":"Staff";
+      $("avIni").textContent = initials(CURRENT_USER); const mu=$("menuUser"); if(mu) mu.textContent=CURRENT_USER;
+      document.querySelectorAll(".adminonly").forEach(x=>x.classList.toggle("hidden",CURRENT_ROLE!=="admin"));
       if("serviceWorker" in navigator){ let _r=false; navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(_r)return; _r=true; location.reload(); }); window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
       keepFocus(); loadBins();
       // Live freshness: refresh the Bins list / open bin view so changes others save appear automatically.
@@ -450,14 +643,16 @@ else {
     } else {
       try{ localStorage.removeItem("sk_key"); }catch(e){}
       $("keygate").classList.remove("hidden");
-      const m=$("gateMsg"); if(m) m.textContent="That username isn't recognized — check spelling and try again.";
+      const m=$("gateMsg"); if(m) m.innerHTML='<span style="color:var(--bad)">Your sign-in expired or that login was removed. Sign in again.</span>';
     }
   })();
 }
 
 /* ---------- tabs ---------- */
 function showTab(t){
-  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","search"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  if(t==="users" && CURRENT_ROLE!=="admin") t="scan";
+  const pt=$("pageTitle"); if(pt) pt.textContent=PAGE_TITLES[t]||"";
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
@@ -467,6 +662,7 @@ function showTab(t){
   if(t==="verify"){ loadStockSummary(); loadStockList(); }
   if(t==="overstock"){ osBatches(); }
   if(t==="activity"){ loadActivity(); }
+  if(t==="users"){ loadUsers(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -515,13 +711,13 @@ function onWedgeScan(code){
 }
 
 /* ---------- camera scanning ---------- */
-let html5qr=null, camOn=false, camReader="reader", camBtnId="camBtn", camStartText="📷 Scan with camera";
+let html5qr=null, camOn=false, camReader="reader", camBtnId="camBtn", camStartText='<i class="ti ti-camera"></i> Scan with camera';
 // Start the camera; on a successful scan, run onDetect(code). opts: {reader, btn, startText, stopText, note}.
 async function startCamera(onDetect, opts){
   opts=opts||{};
   if(camOn) stopCamera();
-  camReader=opts.reader||"reader"; camBtnId=opts.btn||"camBtn"; camStartText=opts.startText||"📷 Scan with camera";
-  $(camReader).style.display="block"; if($(camBtnId)) $(camBtnId).textContent=opts.stopText||"✕ Stop camera";
+  camReader=opts.reader||"reader"; camBtnId=opts.btn||"camBtn"; camStartText=opts.startText||'<i class="ti ti-camera"></i> Scan with camera';
+  $(camReader).style.display="block"; if($(camBtnId)) $(camBtnId).innerHTML=opts.stopText||'<i class="ti ti-x"></i> Stop camera';
   try{ $(camReader).scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
   try{
     html5qr = new Html5Qrcode(camReader,{ verbose:false });
@@ -532,9 +728,9 @@ async function startCamera(onDetect, opts){
   }catch(e){ const n=$(opts.note||"scanNote"); if(n) n.textContent="Camera unavailable — use a scanner gun or type the code. ("+e+")"; stopCamera(); }
 }
 function toggleCamera(){ if(camOn){ stopCamera(); return; } startCamera((c)=>lookup(c,{scan:true})); }
-function toggleOrderCamera(){ if(camOn){ stopCamera(); return; } startCamera(loadOrder,{reader:"oreader",btn:"ocamBtn",startText:"📷 Scan packing-slip barcode",stopText:"✕ Stop camera",note:"orderNote"}); }
+function toggleOrderCamera(){ if(camOn){ stopCamera(); return; } startCamera(loadOrder,{reader:"oreader",btn:"ocamBtn",startText:'<i class="ti ti-camera"></i> Scan packing-slip barcode',stopText:'<i class="ti ti-x"></i> Stop camera',note:"orderNote"}); }
 function scanIntoBin(bin){ startCamera((code)=>addToBinCode(bin, code)); }
-function stopCamera(){ if($(camBtnId)) $(camBtnId).textContent=camStartText; if($(camReader)) $(camReader).style.display="none";
+function stopCamera(){ if($(camBtnId)) $(camBtnId).innerHTML=camStartText; if($(camReader)) $(camReader).style.display="none";
   if(html5qr){ html5qr.stop().then(()=>html5qr.clear()).catch(()=>{}); } camOn=false; }
 
 /* ---------- lookup / render ---------- */
@@ -544,7 +740,8 @@ let lastCode=null;
    were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
-const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results"};
+const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
+const PAGE_TITLES={scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -586,7 +783,7 @@ window.addEventListener("popstate",(ev)=>{
   let x0=0,y0=0,t0=0,on=false,dir=0,ind=null;
   const blocked=(el)=>{ for(let n=el;n&&n!==document.body;n=n.parentElement){ if(/^(INPUT|TEXTAREA|SELECT|VIDEO|CANVAS)$/.test(n.tagName)) return true; if(n.id==="drawer"||n.classList&&n.classList.contains("noswipe")) return true;
       const cs=getComputedStyle(n); if((cs.overflowX==="auto"||cs.overflowX==="scroll")&&n.scrollWidth>n.clientWidth+2) return true; } return false; };
-  const show=(dx)=>{ if(!ind){ ind=document.createElement("div"); ind.style.cssText="position:fixed;top:45%;z-index:99;width:44px;height:44px;border-radius:50%;background:rgba(73,182,255,.9);color:#04121f;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;pointer-events:none;transition:opacity .1s"; document.body.appendChild(ind); }
+  const show=(dx)=>{ if(!ind){ ind=document.createElement("div"); ind.style.cssText="position:fixed;top:45%;z-index:99;width:44px;height:44px;border-radius:50%;background:rgba(22,21,29,.85);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;pointer-events:none;transition:opacity .1s"; document.body.appendChild(ind); }
     const back=dx>0, ok=back?NAV.length>0:FWD.length>0; const p=Math.min(1,Math.abs(dx)/90);
     ind.textContent=back?"‹":"›"; ind.style.left=back?(Math.min(dx,90)-44+8)+"px":""; ind.style.right=back?"":(Math.min(-dx,90)-44+8)+"px"; ind.style.opacity=ok?String(p):"0"; };
   const hide=()=>{ if(ind){ ind.remove(); ind=null; } };
@@ -653,9 +850,9 @@ function fmt(ts){ try{ return new Date(ts).toLocaleString([], {month:"short",day
 // Last stock verification, shown wherever a product is listed. Amber when never counted or 30+ days old.
 const VER_STALE_DAYS=30;
 function verTag(at,by){
-  if(!at) return '<span class="vtag never">📊 never verified</span>';
+  if(!at) return '<span class="vtag never"><i class="ti ti-clipboard-check"></i> never verified</span>';
   const old=(Date.now()-new Date(at).getTime())/864e5 > VER_STALE_DAYS;
-  return `<span class="vtag ${old?"old":"ok"}">📊 verified ${fmtD(at)}${by?` · ${esc(by)}`:""}</span>`;
+  return `<span class="vtag ${old?"old":"ok"}"><i class="ti ti-clipboard-check"></i> verified ${fmtD(at)}${by?` · ${esc(by)}`:""}</span>`;
 }
 function actRows(list, showItem){
   if(!list||!list.length) return '<div class="muted">No quantity changes logged yet.</div>';
@@ -672,17 +869,17 @@ function renderItem(d){
   currentView=null; // item views aren't auto-refreshed (avoids clobbering a move in progress)
   const v = d.verification;
   const bins = tokens(d.current_bin);
-  const chips = bins.length ? bins.map(bn=>`<span class="binchip">📍 ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin">✕</button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
-  const binPill = bins.length ? `<span class="pill bin">📍 ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
+  const chips = bins.length ? bins.map(bn=>`<span class="binchip"><i class="ti ti-map-pin"></i> ${esc(bn)} <button onclick="removeFromItem('${esc(d.sku)}','${esc(bn)}')" title="Remove this bin"><i class="ti ti-x"></i></button></span>`).join("") : '<span class="muted">No bins assigned yet.</span>';
+  const binPill = bins.length ? `<span class="pill bin"><i class="ti ti-map-pin"></i> ${bins.length} bin${bins.length>1?"s":""}</span>` : `<span class="pill nobin">no bin set</span>`;
   // Overstock carton — shown the moment an item is scanned. Blank when nothing has been uploaded for it.
   const os = d.overstock;
   const osBoxes = os ? (os.manual_box ? [{box:os.manual_box,qty:null}] : (os.boxes||[])) : [];
   const osPill = osBoxes.length
-    ? `<span class="pill bin" style="cursor:pointer" onclick="showOverstockBox('${esc(osBoxes[0].box)}')">📦 Box ${esc(osBoxes.map(b=>b.box).join(", "))}</span>` : "";
+    ? `<span class="pill bin" style="cursor:pointer" onclick="showOverstockBox('${esc(osBoxes[0].box)}')"><i class="ti ti-package"></i> Box ${esc(osBoxes.map(b=>b.box).join(", "))}</span>` : "";
   $("result").innerHTML=`
     <div class="card">
       <div class="itemhead">
-        ${d.image?`<img src="${esc(d.image)}" alt="">`:`<div style="width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center">📦</div>`}
+        ${d.image?`<img src="${esc(d.image)}" alt="">`:`<div style="width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:26px"><i class="ti ti-package"></i></div>`}
         <div style="flex:1;min-width:0">
           <p class="title">${esc(d.title||d.sku)}</p>
           <div class="sub mono">SKU ${esc(d.sku||"—")}${d.barcode?` · UPC ${esc(d.barcode)}`:""}</div>
@@ -694,8 +891,8 @@ function renderItem(d){
       ${d.totals&&d.totals.available!=null?`<div class="invsum"><span><b>${d.totals.available}</b> available</span><span><b>${d.totals.committed}</b> committed</span><span><b>${d.totals.unavailable}</b> unavailable</span></div>`:""}
       ${stockBlock(d)}
       <div class="moverow" style="margin-top:12px">
-        <button class="btn blue" style="flex:1;padding:12px" onclick="openAdjust('${esc(d.sku)}')">± Adjust quantity</button>
-        <button class="btn sec" style="flex:1;padding:12px" onclick="openVerify('${esc(d.sku)}')">📊 Verify count</button>
+        <button class="btn blue" style="flex:1;padding:12px" onclick="openAdjust('${esc(d.sku)}')"><i class="ti ti-arrows-sort"></i> Adjust quantity</button>
+        <button class="btn sec" style="flex:1;padding:12px" onclick="openVerify('${esc(d.sku)}')"><i class="ti ti-clipboard-check"></i> Verify count</button>
       </div>
     </div>
     <div class="card">
@@ -708,14 +905,14 @@ function renderItem(d){
       <div class="chipwrap">${chips}</div>
       ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
           <input id="assignBin" data-osk="1" inputmode="none" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
-          <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label">📷</button>
+          <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label"><i class="ti ti-camera"></i></button>
           <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
         </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
-        : `<div class="note">Max 3 bins — remove one (✕) to add another.</div>`}
+        : `<div class="note">Max 3 bins — remove one (×) to add another.</div>`}
       <div class="sectlabel">Overstock cartons</div>
       ${osBoxes.length ? `<div class="chipwrap">
-          ${osBoxes.map(b=>`<span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(b.box)}')">📦 ${esc(b.box)}${b.qty!=null?` <span class="muted">${b.qty}</span>`:""}</span>`).join("")}
-          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(os.manual_box||"")}')">✏️ Change</button>
+          ${osBoxes.map(b=>`<span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(b.box)}')"><i class="ti ti-package"></i> ${esc(b.box)}${b.qty!=null?` <span class="muted">${b.qty}</span>`:""}</span>`).join("")}
+          <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(os.manual_box||"")}')"><i class="ti ti-pencil"></i> Change</button>
         </div>
         <div class="note">${os.manual_box
           ? `Set by hand — overrides the packing list.`
@@ -742,16 +939,16 @@ function renderBin(d){
   $("result").innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px">
-        <span class="pill bin" style="font-size:15px">🗄️ ${b}</span>
+        <span class="pill bin" style="font-size:15px"><i class="ti ti-building-warehouse"></i> ${b}</span>
         <div class="sub" style="flex:1">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
         <button class="btn ghost" onclick="clearBin('${b}')">Remove all</button>
-        <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')">🖨️ Label</button>
+        <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')"><i class="ti ti-printer"></i> Label</button>
       </div>
       <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
       <div class="moverow">
         <input id="binAdd" data-osk="1" inputmode="none" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
           onkeydown="if(event.key==='Enter')addToBin('${b}')">
-        <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera">📷</button>
+        <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera"><i class="ti ti-camera"></i></button>
         <button class="btn" onclick="addToBin('${b}')">Add</button>
       </div>
       <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
@@ -862,10 +1059,10 @@ function renderBinList(){
     + (list.length>300?`<div class="muted center" style="padding:12px">Showing 300 of ${list.length} — type in the filter to narrow down.</div>`:"");
 }
 async function addBin(){ const code=$("newBin").value.trim(); if(!code)return; try{ await api("/api/bins",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY,code})}); $("newBin").value=""; toast("Bin added"); loadBins(); }catch(e){} }
-async function syncSS(){ const b=$("syncBtn"); const old=b.textContent; b.textContent="⏳ Importing…"; b.disabled=true;
+async function syncSS(){ const b=$("syncBtn"); const old=b.innerHTML; b.textContent="Importing…"; b.disabled=true;
   try{ const r=await api("/api/sync-shipstation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:KEY})});
     if(r.error){ toast(r.error,true); } else { toast(`Imported ${r.imported} + updated ${r.updated} (${r.with_location} located)`); loadBins(); }
-  }catch(e){ toast("Import failed",true); } finally{ b.textContent=old; b.disabled=false; } }
+  }catch(e){ toast("Import failed",true); } finally{ b.innerHTML=old; b.disabled=false; } }
 
 /* ---------- bin fill report: every bin, emptiest first, for condensing ---------- */
 let BR=null, BRV="bins", BRL=new Set(), BRN=300, BRO=new Set(), BR_ALL=false;
@@ -1013,13 +1210,13 @@ function renderOrder(d, mount){
   lastOrder=d;
   const rows=d.items.map(it=>{
     const binCell = it.bin
-      ? tokens(it.bin).map(bn=>`<span class="pill bin" style="margin:2px 4px 2px 0">📍 ${esc(bn)}</span>`).join("")
+      ? tokens(it.bin).map(bn=>`<span class="pill bin" style="margin:2px 4px 2px 0"><i class="ti ti-map-pin"></i> ${esc(bn)}</span>`).join("")
       : `<span class="pill nobin">no bin</span>`;
     const oh = it.on_hand==null ? '<span class="muted">—</span>' : `<b>${it.on_hand}</b>`;
     return `<tr onclick="lookup('${esc(it.sku)}')" style="cursor:pointer">
       <td>${binCell}</td>
       <td><div>${esc(it.name||"")}</div><div class="muted mono" style="font-size:12px">${esc(it.sku)}</div><div>${verTag(it.verified_at,it.verified_by)}</div>
-        <button class="oosbtn" onclick="event.stopPropagation();openOos('${esc(d.order_number)}','${esc(it.sku)}')" title="Can't find it — email the customer">⚠️ Out of stock</button></td>
+        <button class="oosbtn" onclick="event.stopPropagation();openOos('${esc(d.order_number)}','${esc(it.sku)}')" title="Can't find it — email the customer"><i class="ti ti-alert-triangle"></i> Out of stock</button></td>
       <td class="n"><span class="big" style="font-size:22px">${it.qty}</span></td>
       <td class="n">${oh}</td>
     </tr>`;
@@ -1028,15 +1225,15 @@ function renderOrder(d, mount){
   el.innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="pill bin" style="font-size:16px">🧾 ${esc(d.order_number)}</span>
+        <span class="pill bin" style="font-size:16px"><i class="ti ti-receipt"></i> ${esc(d.order_number)}</span>
         ${d.brand?`<span class="sub">${esc(d.brand)}</span>`:""}
         <div style="flex:1"></div>
-        <button class="btn sec" onclick="printOrder()">🖨️ Print</button>
+        <button class="btn sec" onclick="printOrder()"><i class="ti ti-printer"></i> Print</button>
       </div>
       <div class="row" style="margin-top:10px"><span class="k">Ship to</span><span class="v">${esc(d.ship_to||"—")}</span></div>
       <div class="row"><span class="k">Status</span><span class="v">${esc((d.order_status||"—").replace(/_/g," "))}</span></div>
       <div class="row"><span class="k">Items · total to pick</span><span class="v">${d.item_count} · ${d.total_qty}</span></div>
-      ${noBin?`<div class="note" style="color:var(--warn)">⚠️ ${noBin} item${noBin>1?"s have":" has"} no bin assigned — tap the row to set one.</div>`:""}
+      ${noBin?`<div class="note" style="color:var(--warn)"><i class="ti ti-alert-triangle"></i> ${noBin} item${noBin>1?"s have":" has"} no bin assigned — tap the row to set one.</div>`:""}
     </div>
     <div class="card">
       <div class="sectlabel" style="margin-top:0">Pick list — sorted by bin</div>
@@ -1085,8 +1282,8 @@ async function loadStockSummary(){
     $("vstats").innerHTML=[["Total",s.total,""],["Never",s.never_verified,"warn"],["Low ≤3",s.low_stock,"warn"],["Stale 30d+",s.stale,"warn"],["Mismatch",s.discrepancies,"bad"]]
       .map(([l,n,c])=>`<div class="stat ${c}"><div class="n">${n==null?"—":n}</div><div class="l">${l}</div></div>`).join("");
     const b=$("vsyncBtn");
-    if(s.sync&&s.sync.running){ if(b)b.textContent=`⏳ ${s.sync.synced}`; if(!$("tab-verify").classList.contains("hidden")) setTimeout(loadStockSummary,3000); }
-    else if(b) b.textContent="📊 Sync";
+    if(s.sync&&s.sync.running){ if(b)b.textContent=`Syncing ${s.sync.synced}`; if(!$("tab-verify").classList.contains("hidden")) setTimeout(loadStockSummary,3000); }
+    else if(b) b.innerHTML='<i class="ti ti-refresh"></i> Sync';
   }catch(e){}
 }
 const STOCK_PAGE=100; let stockPage=0, stockTotal=0;
@@ -1100,7 +1297,7 @@ async function loadStockList(page){
     const items=d.items||[]; stockTotal=(d.total!=null)?d.total:(page*STOCK_PAGE+items.length);
     if(!stockTotal){ el.innerHTML='<div class="muted center">No items match these filters.'+(($("vq").value||$("vqty").value)?' <a href="#" onclick="clearStockFilters();return false" style="color:var(--accent2)">clear</a>':'')+'</div>'; return; }
     el.innerHTML=items.map(renderStockRow).join("")+renderStockPager();
-  }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load — is the inventory synced yet? Tap 📊 Sync.</div>'; }
+  }catch(e){ el.innerHTML='<div class="muted center">Couldn\'t load — is the inventory synced yet? Tap Sync.</div>'; }
 }
 function renderStockPager(){
   const pages=Math.max(1,Math.ceil(stockTotal/STOCK_PAGE)), cur=stockPage;
@@ -1128,7 +1325,7 @@ function renderStockRow(it){
     <div class="oh ${ohc}">${oh==null?"—":oh}</div>
     <div class="meta">
       <div class="vname">${esc(it.title||it.sku)}</div>
-      <div class="vsub">${esc(it.brand)} · <span class="mono">${esc(it.sku)}</span>${it.bin?` · 📍 ${esc(it.bin)}`:""}</div>
+      <div class="vsub">${esc(it.brand)} · <span class="mono">${esc(it.sku)}</span>${it.bin?` · <i class="ti ti-map-pin"></i> ${esc(it.bin)}`:""}</div>
     </div>
     <div style="text-align:right;flex:none">${badge}<div class="vsub">${it.verified_at?"by "+esc(it.verified_by||"?"):"not counted"}</div></div>
   </div>`;
@@ -1142,9 +1339,9 @@ async function openVerify(sku){
   const brands=(d.brands||[]).map(b=>`<div class="row"${b.active===false?' style="opacity:.55"':""}><span class="k">${esc(b.brand)}${b.active===false?` · ${esc(stName(b.status))} (not counted)`:""}</span><span class="v">${b.on_hand==null?"—":b.on_hand}</span></div>`).join("");
   const last=d.last?`Last verified ${fmt(d.last.verified_at)} by ${esc(d.last.verified_by||"?")} — counted ${d.last.counted_qty}${d.last.corrected?` · corrected Shopify to ${d.last.counted_qty}`:(d.last.matched===false?" · ⚠️ mismatch (not corrected)":"")}`:"Never verified yet.";
   box.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">📊 Verify stock</h3><button class="btn sec" style="padding:6px 12px" onclick="closeVerify()">✕</button></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">Verify stock</h3><button class="btn sec" style="padding:6px 12px" onclick="closeVerify()" aria-label="Close"><i class="ti ti-x"></i></button></div>
     <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
-    <div class="sub mono" style="margin-bottom:8px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div class="sub mono" style="margin-bottom:8px">SKU ${esc(sku)}${d.bin?` · <i class="ti ti-map-pin"></i> ${esc(d.bin)}`:""}</div>
     <div class="card" style="margin:0 0 10px;padding:6px 12px">
       <div class="row"><span class="k">Shopify on hand</span><span class="big" style="font-size:22px">${sys==null?"—":sys}</span></div>
       ${brands}
@@ -1184,7 +1381,7 @@ async function submitVerify(sku){
     let msg, bad=false;
     if(r.matched) msg=`Verified ✓ — matches ${r.system_qty}`;
     else if(r.corrected) msg=`Corrected Shopify → ${r.counted}`;
-    else { msg=`Counted ${r.counted} · ⚠️ Shopify not updated`; bad=true; }
+    else { msg=`Counted ${r.counted} · Shopify not updated`; bad=true; }
     toast(msg, bad);
     if(!$("tab-verify").classList.contains("hidden")){ loadStockList(stockPage); loadStockSummary(); }
     else if(!$("tab-scan").classList.contains("hidden")) lookup(sku); // opened from the product view → refresh it
@@ -1204,7 +1401,7 @@ async function openAdjust(sku){
   const multi=d.brands.length>1;
   const v=d.verification;
   box.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">± Adjust quantity</h3><button class="btn sec" style="padding:6px 12px" onclick="closeAdjust()">✕</button></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">Adjust quantity</h3><button class="btn sec" style="padding:6px 12px" onclick="closeAdjust()" aria-label="Close"><i class="ti ti-x"></i></button></div>
     <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
     <div class="sub mono" style="margin-bottom:4px">SKU ${esc(sku)}</div>
     <div style="margin-bottom:8px">${verTag(v&&v.verified_at, v&&v.verified_by)}</div>
@@ -1266,8 +1463,8 @@ async function submitAdjust(){
     if(r.error){ toast(r.error,true); btns.forEach(b=>b.disabled=false); return; }
     closeAdjust();
     let msg;
-    if(r.verified) msg = r.matched ? `Verified ✓ — matches ${n}` : (r.corrected ? `Shopify → ${n} · verified` : `Verified ${n} · ⚠️ Shopify not updated`);
-    else msg = `Shopify → ${n}${r.failed&&r.failed.length?` · ⚠️ ${r.failed.map(f=>f.brand).join(", ")} failed`:""}`;
+    if(r.verified) msg = r.matched ? `Verified ✓ — matches ${n}` : (r.corrected ? `Shopify → ${n} · verified` : `Verified ${n} · Shopify not updated`);
+    else msg = `Shopify → ${n}${r.failed&&r.failed.length?` · ${r.failed.map(f=>f.brand).join(", ")} failed`:""}`;
     toast(msg, !!(r.failed&&r.failed.length) || (r.verified&&!r.matched&&!r.corrected));
     lookup(ADJ.sku);
   }catch(e){ toast("Save failed",true); btns.forEach(b=>b.disabled=false); }
@@ -1287,6 +1484,96 @@ async function loadActivity(){
 }
 function showSkuActivity(sku){ $("actq").value=sku; $("actdrops").checked=false; showTab("activity"); }
 
+/* ---------- Users (admin portal) ---------- */
+let USERS_DATA=null;
+const fmtWhen=(ts)=>ts?fmt(ts):"never";
+async function loadUsers(){
+  const el=$("userList"); if(!el) return;
+  try{
+    const d=await api("/api/admin/users"); if(d.error){ el.innerHTML='<div class="muted center" style="padding:20px">'+esc(d.error)+'</div>'; return; }
+    USERS_DATA=d;
+    el.innerHTML = d.users.length ? d.users.map(u=>`<div class="urow${u.active?"":" off"}">
+        <div class="uav">${esc(initials(u.name))}</div>
+        <div class="meta"><div class="nm">${esc(u.name)} <span class="role ${u.role}">${u.role==="admin"?"Admin":"Staff"}</span>${u.active?"":' <span class="role">Off</span>'}</div>
+          <div class="sm"><span class="mono">${esc(u.username)}</span> · last sign-in ${esc(fmtWhen(u.last_login))}</div></div>
+        <button class="btn sec sm" onclick="openUserModal(${u.id})"><i class="ti ti-pencil"></i><span class="lbl">Edit</span></button>
+      </div>`).join("")
+      : '<div class="muted center" style="padding:22px">No accounts yet. Add the first one with <b>Add user</b>.</div>';
+    $("builtinList").innerHTML = d.builtin.length ? '<div class="chipwrap">'+d.builtin.map(b=>`<span class="chip" style="cursor:default">${esc(b.name)} <span class="role ${b.role}" style="margin-left:4px">${b.role==="admin"?"Admin":"Staff"}</span></span>`).join("")+'</div>' : "None.";
+    $("userLog").innerHTML = d.log.length ? d.log.map(x=>`<div class="h"><span><b>${esc(x.target||"")}</b> <span class="muted">${esc(x.detail||"")}</span></span><span class="muted" style="white-space:nowrap">${esc(x.who||"")} · ${fmt(x.ts)}</span></div>`).join("") : '<div class="muted">Nothing yet.</div>';
+  }catch(e){ el.innerHTML='<div class="muted center" style="padding:20px">Couldn\'t load users.</div>'; }
+}
+function genPassword(){ const w="abcdefghjkmnpqrstuvwxyz23456789"; let p=""; const a=new Uint32Array(10); crypto.getRandomValues(a); for(const n of a) p+=w[n%w.length]; return p; }
+function closeUserModal(){ $("userModal").classList.remove("show"); }
+function openUserModal(id){
+  const u = id ? (USERS_DATA&&USERS_DATA.users||[]).find(x=>x.id===id) : null;
+  const self = u && u.name===CURRENT_USER && HAS_ACCOUNT;
+  const box=$("userBox");
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px"><h3 style="flex:1">${u?"Edit user":"Add user"}</h3><button class="btn sec sm" onclick="closeUserModal()" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <div class="muted" style="font-size:13.5px">${u?`Signed in last: ${esc(fmtWhen(u.last_login))}`:"They sign in with this username and password."}</div>
+    <label class="lab" for="uName">Name</label>
+    <input id="uName" data-osk="1" type="text" value="${esc(u?u.name:"")}" placeholder="e.g. Maria Lopez" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
+    <label class="lab" for="uUser">Username</label>
+    <input id="uUser" data-osk="1" type="text" value="${esc(u?u.username:"")}" ${u?"disabled":""} placeholder="e.g. maria" autocapitalize="off" spellcheck="false" style="width:100%;padding:0 12px;min-height:42px;font-size:15px">
+    <label class="lab" for="uPass">${u?"New password <span class='muted' style='font-weight:400'>(leave blank to keep)</span>":"Password"}</label>
+    <div class="pwwrap" style="display:flex;gap:8px"><div class="pwwrap" style="flex:1"><input id="uPass" data-osk="1" type="text" value="${u?"":genPassword()}" placeholder="${u?"Leave blank to keep":"At least 6 characters"}" autocomplete="new-password" spellcheck="false" style="width:100%;padding:0 12px;min-height:42px;font-size:15px;font-family:var(--mono)"></div>
+      <button class="btn sec" type="button" onclick="$('uPass').value=genPassword()" title="Make a new random password"><i class="ti ti-refresh"></i></button></div>
+    <label class="lab">Role</label>
+    <div class="seg" id="uRole"><button type="button" data-r="staff" class="${!u||u.role!=="admin"?"on":""}" ${self?"disabled":""}>Staff</button><button type="button" data-r="admin" class="${u&&u.role==="admin"?"on":""}" ${self?"disabled":""}>Admin</button></div>
+    <div class="note" style="text-align:left;margin:6px 0 0">Admins can also open this Users page.</div>
+    <div class="moverow" style="margin-top:18px">
+      ${u&&!self?`<button class="btn sec danger" onclick="toggleUserActive(${u.id},${!u.active})">${u.active?'<i class="ti ti-lock"></i> Turn off':'<i class="ti ti-check"></i> Turn on'}</button>`:""}
+      <span style="flex:1"></span>
+      <button class="btn sec" onclick="closeUserModal()">Cancel</button>
+      <button class="btn" id="uSave" onclick="saveUser(${u?u.id:"null"})">${u?"Save":"Create user"}</button>
+    </div>
+    <div class="note" style="text-align:left;margin:10px 0 0">${u?"Resetting the password signs them out everywhere.":"Copy the password and give it to them. They can change it later from their account menu."}</div>`;
+  box.querySelectorAll("#uRole button").forEach(b=>b.onclick=()=>{ if(b.disabled) return; box.querySelectorAll("#uRole button").forEach(x=>x.classList.toggle("on",x===b)); });
+  $("userModal").classList.add("show");
+  if(!IS_TOUCH) setTimeout(()=>$(u?"uName":"uName").focus(),60);
+}
+async function saveUser(id){
+  const name=$("uName").value.trim(), username=$("uUser").value.trim(), password=$("uPass").value.trim();
+  const role=($("uRole").querySelector("button.on")||{}).dataset?.r||"staff";
+  const btn=$("uSave"); btn.disabled=true;
+  try{
+    const body = id ? Object.assign({name,role}, password?{password}:{}) : {name,username,password,role};
+    const r=await api(id?`/api/admin/users/${id}`:"/api/admin/users",{method:id?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.error){ toast(r.error,true); btn.disabled=false; return; }
+    closeUserModal(); toast(id?(password?"Saved · password reset":"Saved"):`${name} can sign in as ${username}`); loadUsers();
+  }catch(e){ toast("Couldn't save",true); btn.disabled=false; }
+}
+async function toggleUserActive(id,on){
+  if(!on && !confirm("Turn off this account? They're signed out right away and can't sign back in until it's turned on.")) return;
+  try{ const r=await api(`/api/admin/users/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:on})});
+    if(r.error){ toast(r.error,true); return; } closeUserModal(); toast(on?"Account turned on":"Account turned off"); loadUsers(); }
+  catch(e){ toast("Couldn't save",true); }
+}
+/* ---------- change my password ---------- */
+function closePwModal(){ $("pwModal").classList.remove("show"); }
+function openPwModal(){
+  closeAcct();
+  const box=$("pwBox");
+  box.innerHTML = HAS_ACCOUNT ? `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px"><h3 style="flex:1">Change password</h3><button class="btn sec sm" onclick="closePwModal()" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <div class="muted" style="font-size:13.5px">Signed in as <b>${esc(CURRENT_USER)}</b>. Other devices will be signed out.</div>
+    <label class="lab" for="pwCur">Current password</label>
+    <div class="pwwrap"><input id="pwCur" data-osk="1" type="password" autocomplete="current-password" style="width:100%;padding:0 12px;min-height:42px;font-size:15px"><button type="button" class="pweye" onclick="pwPeek('pwCur',this)"><i class="ti ti-eye"></i></button></div>
+    <label class="lab" for="pwNew">New password</label>
+    <div class="pwwrap"><input id="pwNew" data-osk="1" type="password" autocomplete="new-password" placeholder="At least 6 characters" style="width:100%;padding:0 12px;min-height:42px;font-size:15px" onkeydown="if(event.key==='Enter')savePw()"><button type="button" class="pweye" onclick="pwPeek('pwNew',this)"><i class="ti ti-eye"></i></button></div>
+    <div class="moverow" style="margin-top:18px"><span style="flex:1"></span><button class="btn sec" onclick="closePwModal()">Cancel</button><button class="btn" id="pwSave" onclick="savePw()">Change password</button></div>`
+  : `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">Change password</h3><button class="btn sec sm" onclick="closePwModal()" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <p class="muted" style="margin:0 0 14px">You're signed in with a built-in login (<b>${esc(CURRENT_USER)}</b>), which has no password. ${CURRENT_ROLE==="admin"?"Create yourself an account under <b>Users</b> to get one.":"Ask an admin to create you an account."}</p>
+    <div class="moverow"><span style="flex:1"></span>${CURRENT_ROLE==="admin"?`<button class="btn sec" onclick="closePwModal();goTab('users')"><i class="ti ti-users"></i> Users</button>`:""}<button class="btn" onclick="closePwModal()">OK</button></div>`;
+  $("pwModal").classList.add("show");
+}
+async function savePw(){
+  const current=$("pwCur").value, next=$("pwNew").value; const b=$("pwSave"); b.disabled=true;
+  try{ const r=await api("/api/me/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current,next})});
+    if(r.error){ toast(r.error,true); b.disabled=false; return; } closePwModal(); toast("Password changed"); }
+  catch(e){ toast("Couldn't change it",true); b.disabled=false; }
+}
 /* ---------- Strays / put back ---------- */
 let PB_QTY=1;
 async function loadStrays(){
@@ -1297,7 +1584,7 @@ async function loadStrays(){
     el.innerHTML=rows.map(s=>`<div class="row" style="align-items:flex-start;gap:10px">
       <div class="meta" style="flex:1;min-width:0">
         <div class="vname">${esc(s.title||s.sku)}</div>
-        <div class="vsub"><span class="mono">${esc(s.sku)}</span>${s.bin?` · 📍 ${esc(s.bin)}`:""} · back <b>${s.qty}</b>${s.verified?` · <span style="color:var(--accent)">recount ${s.counted_qty}</span>`:""}</div>
+        <div class="vsub"><span class="mono">${esc(s.sku)}</span>${s.bin?` · <i class="ti ti-map-pin"></i> ${esc(s.bin)}`:""} · back <b>${s.qty}</b>${s.verified?` · <span style="color:var(--accent)">recount ${s.counted_qty}</span>`:""}</div>
       </div>
       <div class="vsub" style="text-align:right;flex:none">${esc(s.user_name||"")}<br>${fmt(s.ts)}</div>
     </div>`).join("");
@@ -1320,7 +1607,7 @@ async function strayLookup(){
       const lo=it.on_hand!=null&&it.on_hand<3, z=it.on_hand===0;
       return `<button class="menuitem" style="width:100%;border:1px solid var(--line);margin-bottom:6px;border-radius:10px" onclick="openPutback('${esc(it.sku)}')">
         <span style="min-width:34px;text-align:center;font-weight:800;font-size:18px;color:${z?'var(--bad)':lo?'var(--warn)':'var(--ink)'}">${it.on_hand==null?"—":it.on_hand}</span>
-        <span style="flex:1;text-align:left;min-width:0"><div>${esc(it.title||it.sku)}</div><div class="vsub"><span class="mono">${esc(it.sku)}</span> · ${esc(it.brand||"")}${it.bin?` · 📍 ${esc(it.bin)}`:""}</div><div>${verTag(it.verified_at,it.verified_by)}</div></span></button>`;
+        <span style="flex:1;text-align:left;min-width:0"><div>${esc(it.title||it.sku)}</div><div class="vsub"><span class="mono">${esc(it.sku)}</span> · ${esc(it.brand||"")}${it.bin?` · <i class="ti ti-map-pin"></i> ${esc(it.bin)}`:""}</div><div>${verTag(it.verified_at,it.verified_by)}</div></span></button>`;
     }).join("");
   }catch(e){ toast("Search failed",true); }
 }
@@ -1336,9 +1623,9 @@ async function openPutback(sku){
   catch(e){ box.innerHTML='<div class="center muted" style="padding:20px">Couldn\'t load.<br><button class="btn sec" style="margin-top:12px" onclick="closePutback()">Close</button></div>'; return; }
   const sys=d.system_qty; const low=sys!=null && sys<3;
   box.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">🔄 Put back</h3><button class="btn sec" style="padding:6px 12px" onclick="closePutback()">✕</button></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h3 style="flex:1">Put back</h3><button class="btn sec" style="padding:6px 12px" onclick="closePutback()" aria-label="Close"><i class="ti ti-x"></i></button></div>
     <p class="title" style="font-size:16px">${esc(d.title||sku)}</p>
-    <div class="sub mono" style="margin-bottom:4px">SKU ${esc(sku)}${d.bin?` · 📍 ${esc(d.bin)}`:""}</div>
+    <div class="sub mono" style="margin-bottom:4px">SKU ${esc(sku)}${d.bin?` · <i class="ti ti-map-pin"></i> ${esc(d.bin)}`:""}</div>
     <div style="margin-bottom:8px">${verTag(d.last&&d.last.verified_at, d.last&&d.last.verified_by)}</div>
     <div class="card" style="margin:0 0 10px;padding:6px 12px">
       <div class="row"><span class="k">Shopify on hand</span><span class="big" style="font-size:22px;${low?'color:var(--warn)':''}">${sys==null?"—":sys}</span></div>
@@ -1350,7 +1637,7 @@ async function openPutback(sku){
       <button class="btn sec" style="font-size:24px;width:56px;padding:8px 0" onclick="pbStep(1)">+</button>
     </div>
     ${low?`
-      <div class="note" style="text-align:left;margin:10px 0 6px;color:var(--warn)">⚠️ Low stock — count everything in this bin now (after putting the stray back). This sets the true number in Shopify.</div>
+      <div class="note" style="text-align:left;margin:10px 0 6px;color:var(--warn)"><i class="ti ti-alert-triangle"></i> Low stock — count everything in this bin now (after putting the stray back). This sets the true number in Shopify.</div>
       <input id="pbcount" type="text" inputmode="numeric" placeholder="Bin count" style="width:100%;box-sizing:border-box;font-size:34px;font-weight:800;text-align:center;padding:14px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px" onkeydown="if(event.key==='Enter')submitPutback('${esc(sku)}',true)">
       <div id="pbkeypad" class="keypad hidden">
         ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" onclick="ppad('${n}')">${n}</button>`).join("")}
@@ -1492,7 +1779,7 @@ async function osBatches(){
             <div style="font-size:13px">${x.skus} SKUs · ${x.boxes} cartons · ${x.units||0} units</div>
             <div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.source_file||"")} · ${fmt(x.updated_at)}</div>
           </div>
-          <button class="btn sec" style="padding:8px 12px;color:var(--bad);white-space:nowrap" onclick="deleteBatch(${JSON.stringify(esc(x.batch||""))})">🗑 Delete</button>
+          <button class="btn sec" style="padding:8px 12px;color:var(--bad);white-space:nowrap" onclick="deleteBatch(${JSON.stringify(esc(x.batch||""))})"><i class="ti ti-trash"></i> Delete</button>
         </div>`).join("")
       : '<div class="note">Nothing uploaded yet.</div>';
   }catch(e){}
@@ -1527,7 +1814,7 @@ function osEditOpen({title, note, value, placeholder, onSave, danger}){
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <h3 style="flex:1">${esc(title)}</h3>
-      <button class="btn sec" onclick="osEditClose()" style="padding:6px 12px">✕</button>
+      <button class="btn sec" onclick="osEditClose()" style="padding:6px 12px" aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
     <div class="note" style="margin-top:0">${note}</div>
     <input id="osEditIn" data-osk="1" inputmode="none" autocomplete="off" autocapitalize="characters"
@@ -1591,7 +1878,7 @@ async function showOverstockBox(box){
     const man = (d.manual||[]).length
       ? '<div class="card"><div class="sectlabel" style="margin-top:0">Set by hand</div>'+d.manual.map(m=>`<div class="row"><span class="k mono">${esc(m.sku)}</span><span class="v">manual</span></div>`).join("")+'</div>' : "";
     $("osres").innerHTML='<div class="sectlabel">Carton '+esc(box)+' — '+d.count+' line'+(d.count===1?"":"s")+' · '+(d.units||0)+' units</div>'+body+man+
-      '<div class="card"><button class="btn sec wide" onclick="moveBox('+JSON.stringify(box)+')">📦 Move this whole carton to another number</button><div class="note">Re-labels everything in the carton at once.</div></div>';
+      '<div class="card"><button class="btn sec wide" onclick="moveBox('+JSON.stringify(box)+')"><i class="ti ti-package"></i> Move this whole carton to another number</button><div class="note">Re-labels everything in the carton at once.</div></div>';
   }catch(e){ $("osres").innerHTML='<div class="card center muted">Couldn\'t open that carton.</div>'; }
 }
 function deleteBatch(batch){
@@ -1613,14 +1900,14 @@ function deleteBatch(batch){
 async function osUpload(){
   const f=$("osfile").files[0];
   if(!f){ toast("Pick a file first",true); return; }
-  const btn=$("osUp"), old=btn.textContent; btn.textContent="⏳ Uploading…"; btn.disabled=true;
+  const btn=$("osUp"), old=btn.innerHTML; btn.textContent="Uploading…"; btn.disabled=true;
   try{
     const r=await api("/api/overstock/import?name="+encodeURIComponent(f.name),
       {method:"POST",headers:{"Content-Type":"application/octet-stream"},body:f});
     if(r.error){ toast(r.error,true); }
     else{ toast(`${r.rows} rows · ${r.imported} new, ${r.updated} updated${r.skipped?` · ${r.skipped} skipped`:""}`); $("osfile").value=""; osBatches(); }
   }catch(e){ toast("Upload failed",true); }
-  finally{ btn.textContent=old; btn.disabled=false; }
+  finally{ btn.innerHTML=old; btn.disabled=false; }
 }
 
 async function syncInventory(){
@@ -1643,8 +1930,8 @@ async function openOos(order, sku, keepSel){
   const all=d.all_items||d.items;
   box.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-      <h3 style="flex:1">⚠️ Out of stock — email the customer</h3>
-      <button class="btn sec" onclick="closeOos()" style="padding:6px 12px">✕</button>
+      <h3 style="flex:1">Out of stock — email the customer</h3>
+      <button class="btn sec" onclick="closeOos()" style="padding:6px 12px" aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
     <div class="sub" style="margin-bottom:10px">Order <b>${esc(d.order_number)}</b> · ${esc(d.brand||"")} · to ${esc(d.customer_name||"customer")}${d.customer_email?` &lt;${esc(d.customer_email)}&gt;`:""}</div>
     <div class="sectlabel" style="margin-top:0">Which items are out of stock? (one email covers all of them)</div>

@@ -44,6 +44,12 @@ The database schema is created automatically on first boot (idempotent `CREATE T
 - `POST /api/move` `{sku,toBin,user,note,qtySeen}` — set/move bin (DB + history + ShipStation push)
 - `GET /api/bins` · `POST /api/bins` `{code,label}` · `GET /api/search?q=`
 
+## Users & admin
+- **Accounts** are created in the app: menu → **Users** (admins only). Each has a name, username, password (stored hashed) and a role: **Staff** or **Admin**. Admins can add people, reset passwords, change roles and turn accounts off (signs them out right away). Every change is logged on that page.
+- Everyone can change their own password from the avatar menu (top right). Sign-ins last 180 days per device.
+- **Built-in logins** from `STOCKROOM_USERS` (and `ACCESS_KEY`) still work with just the name. `STOCKROOM_ADMINS` (comma-separated, default `Jose`) says which of them are admins.
+- Login attempts are limited to 10 failures per 15 minutes per connection.
+
 ## Quantity: verification, adjustments, activity log
 - **Last verified** — every place a product appears (scan result, Items search, pick list, bin view, strays, put-back) shows when it was last stock-verified and by whom. Amber = never, or more than 30 days ago.
 - **Adjust quantity** — from the product view, set a new on-hand number with a reason (Damaged, Lost / missing, Found extra, Customer return, Received, Count correction, Other) and an optional note. Writes Shopify on-hand (with the matching Shopify reason code). Tick "I counted the whole shelf" to also record it as a stock verification.

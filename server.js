@@ -19,6 +19,7 @@
  */
 const express = require("express");
 const path = require("path");
+const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const ACCESS_KEY = process.env.ACCESS_KEY || process.env.STOCKROOM_KEY || "";
@@ -36,15 +37,28 @@ function loadUsers() {
   return out;
 }
 const USERS = loadUsers();
-// Resolve a login key to a username (case-insensitive). Falls back to the legacy ACCESS_KEY as "admin".
-function userFromKey(key) {
+// Built-in (Railway setting) users who are admins. Everyone else in STOCKROOM_USERS is staff.
+const ENV_ADMINS = (process.env.STOCKROOM_ADMINS || "Jose").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+/* Accounts made in the app live in sr_users (username + password, role admin|staff). Signing in creates a
+ * session token; the app sends that token as its key, so every existing API call works unchanged.
+ * The built-in STOCKROOM_USERS logins and ACCESS_KEY keep working, so nobody gets locked out. */
+const SESSIONS = new Map();   // token -> { name, role, user_id, exp }
+const SESSION_DAYS = 180;     // warehouse phones stay signed in
+function hashPassword(pw) { const salt = crypto.randomBytes(16).toString("hex"); return { salt, hash: crypto.scryptSync(String(pw), salt, 64).toString("hex") }; }
+function checkPassword(pw, salt, hash) { try { const h = crypto.scryptSync(String(pw), salt, 64), b = Buffer.from(hash, "hex"); return h.length === b.length && crypto.timingSafeEqual(h, b); } catch { return false; } }
+// Resolve a key to { name, role }. Order: session token, built-in user, legacy ACCESS_KEY.
+function whoFromKey(key) {
   const k = String(key || "").trim();
   if (!k) return null;
+  const s = SESSIONS.get(k);
+  if (s) { if (s.exp > Date.now()) return { name: s.name, role: s.role, user_id: s.user_id }; SESSIONS.delete(k); }
   const u = USERS.find((u) => u.key.toLowerCase() === k.toLowerCase());
-  if (u) return u.name;
-  if (ACCESS_KEY && k === ACCESS_KEY) return "admin";
+  if (u) return { name: u.name, role: ENV_ADMINS.includes(u.name.toLowerCase()) ? "admin" : "staff", builtin: true };
+  if (ACCESS_KEY && k === ACCESS_KEY) return { name: "admin", role: "admin", builtin: true };
   return null;
 }
+function userFromKey(key) { const w = whoFromKey(key); return w ? w.name : null; }
 
 /* ------------------------------------------------ Postgres ------------------------------------------------ */
 // Railway's INTERNAL url (postgres.railway.internal) must connect WITHOUT ssl; the public proxy needs it.
@@ -56,6 +70,14 @@ const pool = new Pool({
 });
 async function db(q, params) { const c = await pool.connect(); try { return await c.query(q, params); } finally { c.release(); } }
 async function migrate() {
+  // App accounts (admin portal) + their sign-in sessions + who changed what.
+  await db(`CREATE TABLE IF NOT EXISTS sr_users (
+    id SERIAL PRIMARY KEY, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL,
+    pass_salt TEXT NOT NULL, pass_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff',
+    active BOOLEAN NOT NULL DEFAULT true, created_by TEXT, created_at TIMESTAMPTZ DEFAULT now(), last_login TIMESTAMPTZ)`);
+  await db(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sr_users_uname ON sr_users (lower(username))`);
+  await db(`CREATE TABLE IF NOT EXISTS sr_sessions (token TEXT PRIMARY KEY, user_id INT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL)`);
+  await db(`CREATE TABLE IF NOT EXISTS sr_user_log (id BIGSERIAL PRIMARY KEY, who TEXT, target TEXT, detail TEXT, ts TIMESTAMPTZ DEFAULT now())`);
   await db(`CREATE TABLE IF NOT EXISTS bins (
     code TEXT PRIMARY KEY,
     label TEXT,
@@ -925,7 +947,111 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/api/role", (req, res) => res.json({ ok: authed(req), user: userFromKey(keyFrom(req)) }));
+app.get("/api/role", (req, res) => { const w = whoFromKey(keyFrom(req)); res.json({ ok: !!w, user: w ? w.name : null, role: w ? w.role : null, account: !!(w && w.user_id) }); });
+
+/* ---- Sign in / out ---- */
+async function loadSessions() {
+  const r = await db(`SELECT s.token, s.expires_at, u.id, u.name, u.role FROM sr_sessions s JOIN sr_users u ON u.id = s.user_id WHERE s.expires_at > now() AND u.active`);
+  SESSIONS.clear();
+  for (const x of r.rows) SESSIONS.set(x.token, { name: x.name, role: x.role, user_id: x.id, exp: new Date(x.expires_at).getTime() });
+  await db(`DELETE FROM sr_sessions WHERE expires_at < now()`);
+}
+function dropSessions(userId) { for (const [t, s] of SESSIONS) if (s.user_id === Number(userId)) SESSIONS.delete(t); return db(`DELETE FROM sr_sessions WHERE user_id=$1`, [userId]); }
+const FAILS = new Map(); // ip -> [timestamps] — slow down password guessing
+function tooMany(ip) { const now = Date.now(); const a = (FAILS.get(ip) || []).filter((t) => now - t < 15 * 60 * 1000); FAILS.set(ip, a); return a.length >= 10; }
+app.post("/api/login", async (req, res) => {
+  try {
+    const ip = req.get("x-forwarded-for") || req.ip || "";
+    if (tooMany(ip)) return res.status(429).json({ error: "Too many tries. Wait 15 minutes and try again." });
+    const username = String((req.body && req.body.username) || "").trim(), password = String((req.body && req.body.password) || "");
+    if (!username) return res.status(400).json({ error: "Enter your username." });
+    const u = (await db(`SELECT * FROM sr_users WHERE lower(username)=lower($1)`, [username])).rows[0];
+    if (u) {
+      if (u.active && checkPassword(password, u.pass_salt, u.pass_hash)) {
+        const token = crypto.randomBytes(32).toString("hex"), exp = Date.now() + SESSION_DAYS * 864e5;
+        await db(`INSERT INTO sr_sessions (token,user_id,expires_at) VALUES ($1,$2,$3)`, [token, u.id, new Date(exp)]);
+        await db(`UPDATE sr_users SET last_login=now() WHERE id=$1`, [u.id]);
+        SESSIONS.set(token, { name: u.name, role: u.role, user_id: u.id, exp });
+        return res.json({ ok: true, key: token, user: u.name, role: u.role });
+      }
+      FAILS.get(ip).push(Date.now());
+      return res.status(401).json({ error: u.active ? "Wrong username or password." : "This account is turned off. Ask an admin." });
+    }
+    // Built-in logins (STOCKROOM_USERS): the username itself — or "Name" + its secret as the password — is the key.
+    const env = USERS.find((x) => x.key.toLowerCase() === username.toLowerCase()) || USERS.find((x) => x.name.toLowerCase() === username.toLowerCase() && password && x.key === password);
+    if (env) { const w = whoFromKey(env.key); return res.json({ ok: true, key: env.key, user: w.name, role: w.role }); }
+    if (ACCESS_KEY && (username === ACCESS_KEY || password === ACCESS_KEY)) return res.json({ ok: true, key: ACCESS_KEY, user: "admin", role: "admin" });
+    FAILS.get(ip).push(Date.now());
+    res.status(401).json({ error: "Wrong username or password." });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/logout", async (req, res) => {
+  const k = keyFrom(req); if (SESSIONS.has(k)) { SESSIONS.delete(k); await db(`DELETE FROM sr_sessions WHERE token=$1`, [k]).catch(() => {}); }
+  res.json({ ok: true });
+});
+// Change your own password (app accounts only).
+app.post("/api/me/password", async (req, res) => {
+  const w = whoFromKey(keyFrom(req)); if (!w) return res.status(401).json({ error: "unauthorized" });
+  try {
+    if (!w.user_id) return res.status(400).json({ error: "Built-in logins don't have a password here. Ask an admin to create you an account." });
+    const { current, next } = req.body || {};
+    const u = (await db(`SELECT * FROM sr_users WHERE id=$1`, [w.user_id])).rows[0];
+    if (!u || !checkPassword(current || "", u.pass_salt, u.pass_hash)) return res.status(400).json({ error: "Current password is wrong." });
+    if (String(next || "").length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
+    const h = hashPassword(next); await db(`UPDATE sr_users SET pass_salt=$2, pass_hash=$3 WHERE id=$1`, [u.id, h.salt, h.hash]);
+    const keep = keyFrom(req); for (const [t, s] of SESSIONS) if (s.user_id === u.id && t !== keep) SESSIONS.delete(t);
+    await db(`DELETE FROM sr_sessions WHERE user_id=$1 AND token<>$2`, [u.id, keep]);
+    await db(`INSERT INTO sr_user_log (who,target,detail) VALUES ($1,$2,'changed own password')`, [w.name, u.username]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ---- Admin portal: users ---- */
+function adminGuard(req, res) { const w = whoFromKey(keyFrom(req)); if (!w) { res.status(401).json({ error: "unauthorized" }); return null; } if (w.role !== "admin") { res.status(403).json({ error: "Admins only." }); return null; } return w; }
+const ROLE = (r) => (r === "admin" ? "admin" : "staff");
+const USERNAME_RE = /^[A-Za-z0-9._-]{2,32}$/;
+app.get("/api/admin/users", async (req, res) => {
+  if (!adminGuard(req, res)) return;
+  try {
+    const users = (await db(`SELECT id,name,username,role,active,created_by,created_at,last_login FROM sr_users ORDER BY active DESC, lower(name)`)).rows;
+    const builtin = USERS.map((u) => ({ name: u.name, role: ENV_ADMINS.includes(u.name.toLowerCase()) ? "admin" : "staff" }));
+    const log = (await db(`SELECT who,target,detail,ts FROM sr_user_log ORDER BY ts DESC LIMIT 30`)).rows;
+    res.json({ users, builtin, log });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/admin/users", async (req, res) => {
+  const w = adminGuard(req, res); if (!w) return;
+  try {
+    const name = String((req.body && req.body.name) || "").trim(), username = String((req.body && req.body.username) || "").trim(), password = String((req.body && req.body.password) || "");
+    if (!name) return res.status(400).json({ error: "Enter a name." });
+    if (!USERNAME_RE.test(username)) return res.status(400).json({ error: "Username: 2–32 letters, numbers, dots, dashes or underscores. No spaces." });
+    if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+    if (USERS.some((u) => u.name.toLowerCase() === username.toLowerCase() || u.key.toLowerCase() === username.toLowerCase())) return res.status(400).json({ error: `"${username}" is already a built-in login. Pick another username.` });
+    if ((await db(`SELECT 1 FROM sr_users WHERE lower(username)=lower($1)`, [username])).rows.length) return res.status(400).json({ error: `Username "${username}" is taken.` });
+    const h = hashPassword(password);
+    try {
+      const r = await db(`INSERT INTO sr_users (name,username,pass_salt,pass_hash,role,created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,name,username,role,active,created_at`, [name, username, h.salt, h.hash, ROLE(req.body.role), w.name]);
+      await db(`INSERT INTO sr_user_log (who,target,detail) VALUES ($1,$2,$3)`, [w.name, username, `created as ${ROLE(req.body.role)}`]);
+      res.json({ ok: true, user: r.rows[0] });
+    } catch (e) { if (/unique/i.test(e.message)) return res.status(400).json({ error: `Username "${username}" is taken.` }); throw e; }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch("/api/admin/users/:id", async (req, res) => {
+  const w = adminGuard(req, res); if (!w) return;
+  try {
+    const id = Number(req.params.id);
+    const u = (await db(`SELECT * FROM sr_users WHERE id=$1`, [id])).rows[0]; if (!u) return res.status(404).json({ error: "User not found." });
+    const b = req.body || {}, changes = [];
+    if (w.user_id === id && (b.active === false || (b.role && ROLE(b.role) !== "admin"))) return res.status(400).json({ error: "You can't turn off or demote your own account." });
+    if (b.name != null) { const n = String(b.name).trim(); if (!n) return res.status(400).json({ error: "Enter a name." }); await db(`UPDATE sr_users SET name=$2 WHERE id=$1`, [id, n]); changes.push(`name → ${n}`); }
+    if (b.role != null) { await db(`UPDATE sr_users SET role=$2 WHERE id=$1`, [id, ROLE(b.role)]); changes.push(`role → ${ROLE(b.role)}`); }
+    if (b.password != null) { if (String(b.password).length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." }); const h = hashPassword(b.password); await db(`UPDATE sr_users SET pass_salt=$2, pass_hash=$3 WHERE id=$1`, [id, h.salt, h.hash]); await dropSessions(id); changes.push("password reset"); }
+    if (b.active != null) { await db(`UPDATE sr_users SET active=$2 WHERE id=$1`, [id, !!b.active]); if (!b.active) await dropSessions(id); changes.push(b.active ? "turned on" : "turned off"); }
+    for (const [, s] of SESSIONS) if (s.user_id === id) { if (b.name != null) s.name = String(b.name).trim(); if (b.role != null) s.role = ROLE(b.role); }
+    if (changes.length) await db(`INSERT INTO sr_user_log (who,target,detail) VALUES ($1,$2,$3)`, [w.name, u.username, changes.join(", ")]);
+    res.json({ ok: true, user: (await db(`SELECT id,name,username,role,active,created_at,last_login FROM sr_users WHERE id=$1`, [id])).rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Resolve any scanned/typed code.
 app.get("/api/resolve", async (req, res) => {
@@ -1644,7 +1770,7 @@ app.get("/api/activity", async (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 (async () => {
-  try { await migrate(); console.log("🗄️  Postgres schema ready"); }
+  try { await migrate(); await loadSessions(); console.log(`🗄️  Postgres schema ready · ${SESSIONS.size} signed-in sessions`); }
   catch (e) { console.error("❌ DB migrate failed:", e.message); }
   app.listen(PORT, () => {
     console.log(`📦 Stockroom on :${PORT}`);
