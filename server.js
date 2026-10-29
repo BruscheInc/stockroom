@@ -978,11 +978,13 @@ app.post("/api/login", async (req, res) => {
       return res.status(401).json({ error: u.active ? "Wrong username or password." : "This account is turned off. Ask an admin." });
     }
     // Built-in logins (STOCKROOM_USERS): the username itself — or "Name" + its secret as the password — is the key.
-    const env = USERS.find((x) => x.key.toLowerCase() === username.toLowerCase()) || USERS.find((x) => x.name.toLowerCase() === username.toLowerCase() && password && x.key === password);
+    // Same forgiving match as the old one-box sign-in: case doesn't matter, and the secret can go in either box.
+    const lc = (v) => String(v || "").trim().toLowerCase();
+    const env = USERS.find((x) => lc(x.key) === lc(username)) || (password && USERS.find((x) => lc(x.key) === lc(password) && (lc(x.name) === lc(username) || !username)));
     if (env) { const w = whoFromKey(env.key); return res.json({ ok: true, key: env.key, user: w.name, role: w.role }); }
     if (ACCESS_KEY && (username === ACCESS_KEY || password === ACCESS_KEY)) return res.json({ ok: true, key: ACCESS_KEY, user: "admin", role: "admin" });
     FAILS.get(ip).push(Date.now());
-    res.status(401).json({ error: "Wrong username or password." });
+    res.status(401).json({ error: /@/.test(username) ? "Use your Stockroom username, not an email address." : "Wrong username or password. Built-in logins: type the same thing you always typed into Username and leave Password blank." });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/logout", async (req, res) => {
