@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#FFFFFF" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
 <title>Brusche Stockroom</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
@@ -492,8 +493,8 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="muted" style="font-size:13px">Sort
           <select id="brSort" onchange="BRN=300;renderBinReport()" style="background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px">
-            <option value="qty_asc">Item quantity: low → high</option><option value="qty_desc">Item quantity: high → low</option>
-            <option value="bin_asc">Bin number: low → high</option><option value="bin_desc">Bin number: high → low</option></select></label>
+            <option value="bin_asc" selected>Bin number: low → high</option><option value="bin_desc">Bin number: high → low</option>
+            <option value="qty_asc">Item quantity: low → high</option><option value="qty_desc">Item quantity: high → low</option></select></label>
         <input id="brQ" data-osk="1" inputmode="none" placeholder="Find a bin (R-35) or SKU…" autocomplete="off" oninput="BRN=300;renderBinReport()" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px;font-size:14px">
       </div>
       <div id="brLetters" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center"></div>
@@ -1088,7 +1089,7 @@ function brCmpBin(a,b){ const la=brLoc(a), lb=brLoc(b); if(la!==lb) return la===
   if(a.num!=null&&b.num!=null&&a.num!==b.num) return a.num-b.num;
   return String(a.code).localeCompare(String(b.code),undefined,{numeric:true,sensitivity:"base"}); }
 const brCmpCode=(a,b)=>brCmpBin(a,b);
-function brSorter(codeOf,qtyOf){ const m=($("brSort")&&$("brSort").value)||"qty_asc";
+function brSorter(codeOf,qtyOf){ const m=($("brSort")&&$("brSort").value)||"bin_asc";
   if(m==="bin_asc") return (a,b)=>brCmpCode(codeOf(a),codeOf(b));
   if(m==="bin_desc") return (a,b)=>brCmpCode(codeOf(b),codeOf(a));
   if(m==="qty_desc") return (a,b)=>qtyOf(b)-qtyOf(a)||brCmpCode(codeOf(a),codeOf(b));
