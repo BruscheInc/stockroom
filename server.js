@@ -119,6 +119,8 @@ async function migrate() {
                 WHEN c ~ '^[0-9]+-[A-Z]+$' THEN substring(c from '([A-Z]+)$') || '|' || substring(c from '^([0-9]+)')
                 ELSE c END FROM (SELECT bin_canon(t) AS c) s $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
+  // Archived bins: hidden from the bin list and reports (keyed by bin identity, so any spelling matches). Reversible.
+  await db(`CREATE TABLE IF NOT EXISTS bin_archive (key TEXT PRIMARY KEY, code TEXT, archived_by TEXT, archived_at TIMESTAMPTZ DEFAULT now(), items_cleared INT DEFAULT 0)`);
   // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
   await db(`CREATE TABLE IF NOT EXISTS stock_items (
     sku TEXT NOT NULL,
@@ -710,7 +712,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
     `INSERT INTO location_history (sku,from_bin,to_bin,qty_seen,user_name,source,note) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [sku, fromBin, finalBin, qtySeen ?? null, user || null, source || "scan", note || null]
   );
-  if (finalBin) await registerBinTokens(finalBin);
+  if (finalBin) { await registerBinTokens(finalBin); await unarchiveTokens(finalBin, user); }
   // Push to ShipStation (best-effort — never block the local move on it).
   let shipstation = { pushed: false };
   if (batch && ssConfigured()) { ssQueuePush(sku, finalBin || ""); shipstation = { queued: true }; }
@@ -725,6 +727,10 @@ function binTokens(loc) { return String(loc || "").split(",").map((s) => s.trim(
 async function registerBinTokens(loc) {
   for (const tok of binTokens(loc)) { try { await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [tok]); } catch {} }
 }
+async function unarchiveTokens(loc, user) {
+  try { await db(`DELETE FROM bin_archive WHERE key = ANY(SELECT bin_key(x) FROM unnest(regexp_split_to_array($1, '[,;/|]')) x WHERE trim(x) <> '')`, [loc]); } catch {}
+}
+async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
 // Items in a bin = any item whose location contains that bin as one of its comma-separated tokens.
 async function binItems(code) {
   const r = await db(
@@ -922,7 +928,7 @@ async function resolveCode(raw) {
   const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
   if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
     const bin = knownBin.rows[0]?.code || binGuess;
-    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items: await binItems(bin) };
+    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items: await binItems(bin), archived: await isArchived(bin) };
   }
   // 2) item — try SKU first, then barcode (UPC/EAN). Also strip common order-barcode prefixes.
   let matches = await shopifyFind({ sku: code });
@@ -1428,7 +1434,7 @@ app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
-    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items: await binItems(req.params.code) });
+    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items: await binItems(req.params.code), archived: await isArchived(req.params.code) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // History for a SKU.
@@ -1481,7 +1487,8 @@ async function swapPlan(fromRaw, toRaw) {
       bin: r.bin, other_bins: others, next: next.join(", "), already_in_to: !!(to && toks.some((t) => t.k === to.key)) });
   }
   const listed = (await db(`SELECT 1 FROM bins WHERE bin_key(code) = $1`, [from.key])).rows.length > 0;
-  return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed };
+  const arch = (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = $1`, [from.key])).rows[0] || null;
+  return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed, from_archived: arch };
 }
 app.get("/api/bins/swap", async (req, res) => {
   if (!guard(req, res)) return;
@@ -1504,9 +1511,50 @@ app.post("/api/bins/swap", async (req, res) => {
     if (plan.to) await registerBinTokens(plan.to);
     let removed = false;
     if (removeFrom && !failed.length && !(await binSkus(plan.from_key)).length) {
-      removed = (await db(`DELETE FROM bins WHERE bin_key(code) = $1`, [plan.from_key])).rowCount > 0;
+      await archiveBin(plan.from_key, plan.from, by, 0); removed = true;      // archived (hidden, can be restored)
     }
     res.json({ ok: true, from: plan.from, to: plan.to, moved, failed, removed, shipstation_pending: SSQ.size });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+async function archiveBin(key, code, by, cleared) {
+  await db(`INSERT INTO bin_archive (key,code,archived_by,archived_at,items_cleared) VALUES ($1,$2,$3,now(),$4)
+            ON CONFLICT (key) DO UPDATE SET code=EXCLUDED.code, archived_by=EXCLUDED.archived_by, archived_at=now(), items_cleared=EXCLUDED.items_cleared`, [key, code, by, cleared || 0]);
+}
+// Archive a bin. clearItems=true also takes the bin off every item still in it (they keep their other bins).
+app.post("/api/bins/archive", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { bin, clearItems } = req.body || {};
+    const plan = await swapPlan(bin, null);
+    const by = actorOf(req);
+    let cleared = 0; const failed = [];
+    if (plan.items.length) {
+      if (!clearItems) return res.status(400).json({ error: `${plan.from} still holds ${plan.items.length} item${plan.items.length === 1 ? "" : "s"}. Move them first, or tick "also take it off those items".`, items: plan.items.length });
+      for (const it of plan.items) {
+        try { await moveItem({ sku: it.sku, toBin: it.next, user: by, source: "archive", note: `Bin ${plan.from} archived`, batch: true }); cleared++; }
+        catch (e) { failed.push({ sku: it.sku, error: e.message }); }
+      }
+    }
+    await archiveBin(plan.from_key, plan.from, by, cleared);
+    res.json({ ok: true, bin: plan.from, cleared, failed, shipstation_pending: SSQ.size });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/bins/unarchive", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`DELETE FROM bin_archive WHERE key = bin_key($1) RETURNING code`, [String((req.body && req.body.bin) || "").replace(/^BIN[-:]/i, "")]);
+    res.json({ ok: true, restored: r.rowCount > 0, bin: r.rows[0] ? r.rows[0].code : null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/bins/archived", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const q = String(req.query.q || "").trim();
+    const r = await db(`SELECT a.code, a.archived_by, a.archived_at, a.items_cleared,
+          (SELECT count(*)::int FROM item_location il WHERE il.bin IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = a.key)) AS items
+        FROM bin_archive a ${q ? "WHERE a.code ILIKE '%'||$1||'%' OR a.key = bin_key($1)" : ""} ORDER BY a.archived_at DESC LIMIT 300`, q ? [q] : []);
+    const n = (await db(`SELECT count(*)::int AS n FROM bin_archive`)).rows[0].n;
+    res.json({ bins: r.rows, total: n });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/shipstation-queue", (req, res) => { if (!guard(req, res)) return; res.json({ pending: SSQ.size, running: ssqRunning, done: ssqDone, failed: ssqFailed.slice(-10) }); });
@@ -1540,6 +1588,7 @@ app.get("/api/bins", async (req, res) => {
       )
       SELECT b.code, b.label, COALESCE(c.items, 0) AS items
       FROM bins b LEFT JOIN counts c ON lower(b.code) = c.code
+      WHERE NOT EXISTS (SELECT 1 FROM bin_archive a WHERE a.key = bin_key(b.code))
       ORDER BY b.code`);
     res.json({ bins: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1624,12 +1673,14 @@ app.get("/api/bins/report", async (req, res) => {
       if (!bins[k]) bins[k] = { ...binShape(k, x.code_raw, sides), label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
     }
+    const archived = new Set((await db(`SELECT key FROM bin_archive`)).rows.map((x) => x.key));
+    for (const k of Object.keys(bins)) if (archived.has(k)) delete bins[k];
     const out = Object.values(bins).map((b) => {
       b.items.sort((a, c) => (a.qty ?? -1) - (c.qty ?? -1) || String(a.sku).localeCompare(String(c.sku)));
       return { ...b, skus: b.items.length, units: b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0), unknown: b.items.filter((i) => i.qty == null).length, zero: b.items.filter((i) => i.qty === 0).length };
     });
     out.sort((a, b) => a.units - b.units || a.skus - b.skus || String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
-    res.json({ bins: out, locations: [...LOC_ALL].sort(), synced: (invSync && invSync.at) || null });
+    res.json({ bins: out, locations: [...LOC_ALL].sort(), synced: (invSync && invSync.at) || null, archived: archived.size });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Import existing bin locations from ShipStation (warehouseLocation → app DB). Idempotent.

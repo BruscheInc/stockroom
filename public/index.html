@@ -566,6 +566,8 @@
       <div id="sreader" style="width:100%;border-radius:14px;overflow:hidden;margin-top:10px;display:none;background:#000"></div>
     </div>
     <div id="swPlan"></div>
+    <div class="sectlabel">Archived bins</div>
+    <div class="card"><div id="swArch"><div class="muted">Loading…</div></div></div>
   </section>
   <section id="tab-labels" class="hidden">
     <div class="card">
@@ -1031,12 +1033,14 @@ function renderBin(d){
     : '<tr><td colspan="2" class="muted">No items in this bin yet — add one below.</td></tr>';
   $("result").innerHTML=`
     <div class="card">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="pill bin" style="font-size:15px"><i class="ti ti-building-warehouse"></i> ${b}</span>
-        <div class="sub" style="flex:1">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
-        <button class="btn sec" onclick="swFromBin('${b}')"><i class="ti ti-arrows-sort"></i> Move all</button>
-        <button class="btn ghost" onclick="clearBin('${b}')">Remove all</button>
-        <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')"><i class="ti ti-printer"></i> Label</button>
+      <div style="display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap">
+        <span class="pill bin" style="font-size:15px;white-space:nowrap"><i class="ti ti-building-warehouse"></i> ${b}</span>${d.archived?` <span class="role">Archived</span> <button class="btn sec sm" onclick="swRestore(${esc(JSON.stringify(d.bin))})">Restore</button>`:""}
+        <div class="sub" style="flex:1;white-space:nowrap">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;width:100%">
+        <button class="btn sec sm" onclick="swFromBin('${b}')"><i class="ti ti-arrows-sort"></i> Move all</button>
+        <button class="btn sec sm" onclick="clearBin('${b}')">Remove all</button>
+        <button class="btn sec sm" onclick="printLabel('${b}','${esc(d.label||"")}')"><i class="ti ti-printer"></i> Label</button>
+        </div>
       </div>
       <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
       <div class="moverow">
@@ -1209,7 +1213,7 @@ function renderBinReport(){
   const bins=brBins();
   const emptyBins=bins.filter(b=>!b.skus).length, low=bins.filter(b=>b.skus&&b.units<=5).length, totalUnits=bins.reduce((s,b)=>s+b.units,0);
   $("brSum").innerHTML=[[bins.length,"bins"],[emptyBins,"empty"],[low,"with 1–5 units"],[totalUnits,"units on shelves"]].map(([n,l])=>`<div><div style="font-size:20px;font-weight:800">${n}</div><div class="muted" style="font-size:12px">${l}</div></div>`).join("")
-    +(BR.synced?`<div class="muted" style="font-size:12px;align-self:flex-end;margin-left:auto">Quantities from the last Shopify sync: ${new Date(BR.synced).toLocaleString()}</div>`:"");
+    +(BR.synced?`<div class="muted" style="font-size:12px;align-self:flex-end;margin-left:auto">Quantities from the last Shopify sync: ${new Date(BR.synced).toLocaleString()}${BR.archived?` · <a style="color:var(--accent2);cursor:pointer" onclick="goTab('binswap')">${BR.archived} archived bin${BR.archived===1?"":"s"} hidden</a>`:""}</div>`:"");
   const el=$("brList");
   if(BRV==="bins"){
     const max=Math.max(1,...bins.map(b=>b.units));
@@ -2071,7 +2075,7 @@ async function sendOos(order){
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
 /* ---------- bin swap ---------- */
 let SW_T=null, SW_PLAN=null;
-function swInit(){ swLoad(); if(!IS_TOUCH) setTimeout(()=>{ const f=$("swFrom"); if(f&&!f.value) f.focus(); },60); }
+function swInit(){ swLoad(); swArchList(); if(!IS_TOUCH) setTimeout(()=>{ const f=$("swFrom"); if(f&&!f.value) f.focus(); },60); }
 function swFromBin(bin){ $("swFrom").value=bin; $("swTo").value=""; goTab("binswap"); setTimeout(()=>$("swTo").focus(),80); }
 function swQueue(){ clearTimeout(SW_T); SW_T=setTimeout(swLoad,350); }
 function swScan(id){ startCamera((code)=>{ $(id).value=String(code).replace(/^BIN[-:]/i,""); swLoad(); if(id==="swFrom"&&!$("swTo").value) $("swTo").focus(); },{reader:"sreader",btn:"swNoBtn",note:"swPlan"}); }
@@ -2086,10 +2090,9 @@ async function swLoad(){
   const n=d.items.length, units=d.items.reduce((s,i)=>s+(Number(i.qty)||0),0);
   const rows=d.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer"><td><div class="mono">${esc(i.sku)}</div><div class="muted" style="font-size:12px">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · <b>already in ${esc(d.to)}</b>`:""}</div></td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`).join("");
   const head=`<div class="swhead"><span class="pill bin">${esc(d.from)}</span><i class="ti ti-chevron-right muted"></i>${d.to?`<span class="pill bin">${esc(d.to)}</span>`:'<span class="muted">pick the new bin</span>'}</div>`;
-  if(d.same){ el.innerHTML=`<div class="card">${head}<p style="color:var(--bad);margin:10px 0 0">That's the same bin.</p></div>`; return; }
+  if(d.same){ el.innerHTML=`<div class="card">${head}<p style="color:var(--bad);margin:10px 0 0">That's the same bin.</p></div>`+swArchCard(d); return; }
   if(!n){
-    el.innerHTML=`<div class="card">${head}<p class="muted" style="margin:10px 0 12px"><b>${esc(d.from)}</b> is empty — nothing to move.</p>
-      ${d.from_listed?`<button class="btn sec danger" onclick="swRemoveEmpty()"><i class="ti ti-trash"></i> Remove ${esc(d.from)} from the bin list</button>`:'<div class="note" style="text-align:left;margin:0">It isn\'t on the bin list either.</div>'}</div>`;
+    el.innerHTML=`<div class="card">${head}<p class="muted" style="margin:10px 0 0"><b>${esc(d.from)}</b> is empty — nothing to move.</p></div>`+swArchCard(d);
     return;
   }
   el.innerHTML=`<div class="card">${head}
@@ -2097,10 +2100,10 @@ async function swLoad(){
       <table style="margin-top:6px"><thead><tr><th>Item</th><th class="n">On hand</th></tr></thead><tbody>${rows}</tbody></table>
     </div>
     <div class="card">
-      <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> Remove <b style="margin:0 3px">${esc(d.from)}</b> from the bin list when it's empty</label>
+      <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> <span>Archive <b>${esc(d.from)}</b> when it's empty — hides it from Bins and the fill report (you can restore it)</span></label>
       <div class="note" style="text-align:left;margin:8px 0 12px">Each item keeps any other bins it's in. Every move is in the item's location history and is sent to ShipStation.</div>
       <button class="btn wide" id="swGo" ${d.to?"":"disabled"} onclick="swGo()"><i class="ti ti-arrows-sort"></i> ${d.to?`Move ${n} item${n===1?"":"s"} to ${esc(d.to)}`:"Pick the new bin"}</button>
-    </div>`;
+    </div>`+swArchCard(d);
 }
 async function swGo(){
   const d=SW_PLAN; if(!d||!d.to) return;
@@ -2111,19 +2114,53 @@ async function swGo(){
     if(r.error){ toast(r.error,true); b.disabled=false; b.textContent="Try again"; return; }
     $("swPlan").innerHTML=`<div class="card">
       <div class="swhead"><span class="pill bin">${esc(r.from)}</span><i class="ti ti-chevron-right muted"></i><span class="pill bin">${esc(r.to)}</span></div>
-      <p style="margin:12px 0 4px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved to ${esc(r.to)}.</b>${r.removed?` ${esc(r.from)} is off the bin list.`:""}</p>
+      <p style="margin:12px 0 4px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved to ${esc(r.to)}.</b>${r.removed?` ${esc(r.from)} is archived.`:""}</p>
       ${r.failed.length?`<p style="color:var(--bad);margin:4px 0">${r.failed.length} didn't move: ${esc(r.failed.map(f=>f.sku).join(", "))}</p>`:""}
       <p class="muted" style="margin:4px 0 14px">ShipStation is being updated in the background${r.shipstation_pending?` (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min)`:""}.</p>
       <div class="moverow"><button class="btn sec" onclick="lookup('BIN-${esc(r.to)}')"><i class="ti ti-building-warehouse"></i> Open ${esc(r.to)}</button><button class="btn" onclick="$('swFrom').value='';$('swTo').value='';swLoad();$('swFrom').focus()">New swap</button></div></div>`;
-    toast(`Moved ${r.moved} to ${r.to}`);
+    toast(`Moved ${r.moved} to ${r.to}`); swArchList(); if(BR) BR._at=0;
   }catch(e){ toast("Swap failed",true); b.disabled=false; b.textContent="Try again"; }
 }
-async function swRemoveEmpty(){
+// Archive: hide a bin from the bin list and reports while rebinning. Reversible.
+function swArchCard(d){
+  const n=d.items.length;
+  if(d.from_archived) return `<div class="card"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span class="role">Archived</span><span class="muted" style="flex:1;min-width:150px">${esc(d.from)} was archived by ${esc(d.from_archived.archived_by||"?")} · ${fmt(d.from_archived.archived_at)}</span>
+      <button class="btn sec sm" onclick="swRestore(${esc(JSON.stringify(d.from))})"><i class="ti ti-arrow-back-up"></i> Restore</button></div></div>`;
+  return `<div class="card">
+    <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px"><b>Archive ${esc(d.from)}</b><div class="muted" style="font-size:13.5px">Hides it from Bins and the bin fill report. Scanning its label still works, and you can restore it below.</div></div>
+      <button class="btn sec" id="swArchBtn" onclick="swArchive()"><i class="ti ti-package"></i> Archive ${esc(d.from)}</button>
+    </div>
+    ${n?`<label class="vtoggle" style="margin-top:10px;align-items:flex-start"><input type="checkbox" id="swArchClear" style="margin-top:2px"> <span>Also take ${esc(d.from)} off the ${n} item${n===1?"":"s"} still in it (they keep their other bins)</span></label>`:""}
+  </div>`;
+}
+async function swArchive(){
   const d=SW_PLAN; if(!d) return;
-  if(!confirm(`Remove ${d.from} from the bin list?`)) return;
-  try{ const r=await api("/api/bins/swap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:d.from,removeFrom:true})});
-    if(r.error){ toast(r.error,true); return; } toast(r.removed?`${r.from} removed`:"Nothing to remove"); swLoad(); }
-  catch(e){ toast("Failed",true); }
+  const n=d.items.length, clear=!!($("swArchClear")&&$("swArchClear").checked);
+  if(n&&!clear){ toast(`${d.from} still holds ${n} item${n===1?"":"s"} — move them above, or tick "also take it off"`,true); return; }
+  if(!confirm(`Archive ${d.from}?${n?` It will be taken off ${n} item${n===1?"":"s"}.`:""}`)) return;
+  const b=$("swArchBtn"); if(b) b.disabled=true;
+  try{ const r=await api("/api/bins/archive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bin:d.from,clearItems:clear})});
+    if(r.error){ toast(r.error,true); if(b) b.disabled=false; return; }
+    toast(`${r.bin} archived${r.cleared?` · taken off ${r.cleared} item${r.cleared===1?"":"s"}`:""}`);
+    $("swFrom").value=""; $("swTo").value=""; swLoad(); swArchList(); if(BR) BR._at=0; }
+  catch(e){ toast("Couldn't archive",true); if(b) b.disabled=false; }
+}
+async function swRestore(bin){
+  try{ const r=await api("/api/bins/unarchive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bin})});
+    if(r.error){ toast(r.error,true); return; } toast(r.restored?`${r.bin} restored`:"It wasn't archived");
+    swArchList(); if(BR) BR._at=0; if(!$("tab-binswap").classList.contains("hidden")) swLoad(); else if(currentView&&currentView.kind==="bin") reloadBin(currentView.key); }
+  catch(e){ toast("Couldn't restore",true); }
+}
+async function swArchList(){
+  const el=$("swArch"); if(!el) return;
+  try{ const d=await api("/api/bins/archived");
+    if(!d.bins.length){ el.innerHTML='<div class="muted">No archived bins.</div>'; return; }
+    el.innerHTML=`<div class="muted" style="font-size:13px;margin-bottom:6px">${d.total} archived — hidden from Bins and the fill report.</div>`+
+      d.bins.map(b=>`<div class="row" style="align-items:center"><span><span class="mono" style="font-weight:700">${esc(b.code)}</span> <span class="muted" style="font-size:12.5px">· ${esc(b.archived_by||"")} · ${fmt(b.archived_at)}${b.items?` · <span style="color:var(--warn)">${b.items} item${b.items===1?"":"s"} still list it</span>`:""}</span></span>
+        <button class="btn sec sm" onclick="swRestore(${esc(JSON.stringify(b.code))})">Restore</button></div>`).join("");
+  }catch(e){ el.innerHTML='<div class="muted">Couldn\'t load.</div>'; }
 }
 /* ---------- bin labels (2 × 4 in thermal) ---------- */
 let LBL_FMT=null;
