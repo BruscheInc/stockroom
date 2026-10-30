@@ -316,6 +316,23 @@
     .toast{bottom:28px}
     .oskfab{bottom:24px}
   }
+  .lblform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+  .lblform input,.lblform select{width:100%;min-height:46px;padding:0 12px;font-size:18px;font-weight:700}
+  #lblLetter{text-transform:uppercase}
+  @media (max-width:520px){ .lblform{grid-template-columns:1fr 1fr} }
+  .lblprevwrap{display:flex;flex-direction:column;align-items:center;gap:8px;overflow:hidden}
+  .lblscale{transform-origin:top left}
+  /* the label itself: 4in × 2in, pure black on white for thermal printers */
+  .blabel{width:4in;height:2in;box-sizing:border-box;padding:.1in .12in;background:#fff;color:#000;display:flex;align-items:center;gap:.12in;font-family:"Figtree",Arial,Helvetica,sans-serif;overflow:hidden;break-inside:avoid}
+  .blabel .qr{width:1.72in;height:1.72in;flex:none;display:block}
+  .blabel .rt{flex:1;min-width:0;height:1.72in;display:flex;flex-direction:column;gap:.06in}
+  .blabel .boxes{flex:1;display:flex;gap:.08in;min-height:0}
+  .blabel .bx{border:.045in solid #000;border-radius:.08in;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;line-height:1;overflow:hidden;box-sizing:border-box}
+  .blabel .bx small{font-size:.11in;font-weight:800;letter-spacing:.06em;margin-bottom:.03in}
+  .blabel .bx b{font-weight:900;line-height:.95;white-space:nowrap}
+  .blabel .code{font-size:.17in;font-weight:800;text-align:center;letter-spacing:.02em;white-space:nowrap}
+  .lblprint .blabel{page-break-after:always;break-after:page}
+  .lblprint .blabel:last-child{page-break-after:auto;break-after:auto}
   #printArea{display:none}
   @media print{
     html,body{background:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -526,6 +543,28 @@
     </div>
     <div id="actList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-labels" class="hidden">
+    <div class="card">
+      <h1 class="ph">Print bin labels</h1>
+      <div class="phsub">For 2 × 4 in thermal labels. Each label has a QR code — scan it anywhere in Stockroom to open that bin.</div>
+      <div class="lblform">
+        <div><label class="lab" for="lblLetter">Letter</label>
+          <input id="lblLetter" data-osk="1" inputmode="none" maxlength="3" placeholder="R" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="lblUpdate()"></div>
+        <div><label class="lab" for="lblFrom">Number</label>
+          <input id="lblFrom" data-osk="1" inputmode="none" maxlength="5" placeholder="35" autocomplete="off" oninput="lblUpdate()"></div>
+        <div><label class="lab" for="lblTo">Through <span class="muted" style="font-weight:400">(optional)</span></label>
+          <input id="lblTo" data-osk="1" inputmode="none" maxlength="5" placeholder="—" autocomplete="off" oninput="lblUpdate()"></div>
+        <div><label class="lab" for="lblCopies">Copies</label>
+          <select id="lblCopies" onchange="lblUpdate()"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+      </div>
+      <div id="lblMsg" class="note" style="text-align:left;margin:10px 0 0"></div>
+      <label class="vtoggle" style="margin-top:12px"><input type="checkbox" id="lblAdd" checked> Add these bins to the bin list (so empty ones show in Bins and the fill report)</label>
+    </div>
+    <div class="sectlabel">Preview</div>
+    <div class="card lblprevwrap"><div id="lblPrev"><div class="muted center">Type a letter and a number.</div></div></div>
+    <button class="btn wide" id="lblPrintBtn" onclick="lblPrint()" disabled><i class="ti ti-printer"></i> Print</button>
+    <div class="note" style="text-align:left">In the print window pick your label printer and the <b>4 × 2 in</b> label size, margins none, scale 100%.</div>
+  </section>
   <section id="tab-users" class="hidden">
     <div class="card">
       <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
@@ -578,6 +617,7 @@
     <div class="menusec">Bins</div>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><i class="ti ti-building-warehouse"></i>Bins</button>
     <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><i class="ti ti-chart-bar"></i>Bin fill report</button>
+    <button class="menuitem" data-tab="labels" onclick="menuGo('labels')"><i class="ti ti-printer"></i>Print bin labels</button>
     <div class="menusec adminonly hidden">Admin</div>
     <button class="menuitem adminonly hidden" data-tab="users" onclick="menuGo('users')"><i class="ti ti-users"></i>Users</button>
     <div class="menusec">Sync</div>
@@ -654,7 +694,7 @@ else {
 function showTab(t){
   if(t==="users" && CURRENT_ROLE!=="admin") t="scan";
   const pt=$("pageTitle"); if(pt) pt.textContent=PAGE_TITLES[t]||"";
-  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","labels","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
@@ -665,6 +705,7 @@ function showTab(t){
   if(t==="overstock"){ osBatches(); }
   if(t==="activity"){ loadActivity(); }
   if(t==="users"){ loadUsers(); }
+  if(t==="labels"){ lblInit(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -742,8 +783,8 @@ let lastCode=null;
    were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
-const TAB_NAMES={scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
-const PAGE_TITLES={scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
+const TAB_NAMES={labels:"bin labels",scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
+const PAGE_TITLES={labels:"Print bin labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -2001,15 +2042,89 @@ async function sendOos(order){
 }
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
-function printLabel(code,label){
-  const pa=$("printArea"); pa.innerHTML=`<div style="text-align:center;font-family:sans-serif;background:#fff;color:#000">
-    <div id="qrbox" style="display:inline-block;margin:20px auto;background:#fff"></div>
-    <div style="font-size:40px;font-weight:800;font-family:monospace;letter-spacing:2px;color:#000">${esc(code)}</div>
-    <div style="font-size:20px;color:#333;margin-top:6px">${esc(label||"")}</div>
-    <div style="font-size:13px;color:#888;margin-top:10px">Brusche Stockroom</div></div>`;
+/* ---------- bin labels (2 × 4 in thermal) ---------- */
+let LBL_FMT=null;
+async function lblInit(){
+  if(!LBL_FMT){ try{ LBL_FMT=await api("/api/bins/formats"); if(LBL_FMT.error) LBL_FMT=null; }catch(e){} }
+  lblUpdate();
+  if(!IS_TOUCH) setTimeout(()=>{ const l=$("lblLetter"); if(l&&!l.value) l.focus(); },60);
+}
+// R + 35 → "R-35"; locations written letters-last → "35-T". Same house rule as the bin fill report.
+function lblSide(L){ const f=LBL_FMT||{before:[],after:["T","L","B","U","UW"],auto:{}}; return f.after.includes(L)||(f.auto&&f.auto[L]==="after")?"after":"before"; }
+function lblCode(L,n){ return lblSide(L)==="after"?`${n}-${L}`:`${L}-${n}`; }
+function lblKnown(L){ const f=LBL_FMT; return !f || f.before.includes(L)||f.after.includes(L)||(f.auto&&L in f.auto); }
+function lblList(){
+  const L=($("lblLetter").value||"").toUpperCase().replace(/[^A-Z]/g,"");
+  const a=($("lblFrom").value||"").replace(/\D/g,""), b=($("lblTo").value||"").replace(/\D/g,"");
+  if(!L||!a) return {L,list:[],err:""};
+  let from=Number(a), to=b?Number(b):from;
+  if(to<from) [from,to]=[to,from];
+  if(to-from+1>200) return {L,list:[],err:"That's more than 200 bins — print them in smaller runs."};
+  const list=[]; for(let n=from;n<=to;n++) list.push({L,n:String(n),code:lblCode(L,n)});
+  return {L,list,err:""};
+}
+function lblQR(text){
+  const tmp=document.createElement("div"); tmp.style.cssText="position:absolute;left:-9999px;top:0";
+  document.body.appendChild(tmp);
+  new QRCode(tmp,{ text, width:480, height:480, colorDark:"#000000", colorLight:"#ffffff", correctLevel:QRCode.CorrectLevel.M });
+  const c=tmp.querySelector("canvas"); const url=c?c.toDataURL("image/png"):((tmp.querySelector("img")||{}).src||"");
+  tmp.remove(); return url;
+}
+function lblHTML(x){
+  // Right side is 1.92in wide: letter box + .08in gap + number box. Text is sized to fit both width and height.
+  const lw = x.L.length>1 ? 0.92 : 0.66, nw = 1.92-0.08-lw, pad=0.16, maxH=0.78;
+  const fsL=Math.min(maxH,(lw-pad)/(0.78*x.L.length)), fsN=Math.min(maxH,(nw-pad)/(0.6*x.n.length));
+  return `<div class="blabel">
+    <img class="qr" src="${lblQR("BIN-"+x.code)}" alt="">
+    <div class="rt">
+      <div class="boxes">
+        <div class="bx" style="width:${lw}in;flex:none"><small>LETTER</small><b style="font-size:${fsL.toFixed(3)}in">${esc(x.L)}</b></div>
+        <div class="bx" style="flex:1"><small>NUMBER</small><b style="font-size:${fsN.toFixed(3)}in">${esc(x.n)}</b></div>
+      </div>
+      <div class="code">BIN ${esc(x.code)}</div>
+    </div></div>`;
+}
+let LBL_T=null;
+function lblUpdate(){
+  const ip=$("lblLetter"); if(ip){ const v=ip.value.toUpperCase().replace(/[^A-Z]/g,""); if(v!==ip.value) ip.value=v; }
+  for(const id of ["lblFrom","lblTo"]){ const e=$(id); if(e){ const v=e.value.replace(/\D/g,""); if(v!==e.value) e.value=v; } }
+  clearTimeout(LBL_T); LBL_T=setTimeout(()=>{
+    const {L,list,err}=lblList(), copies=Number($("lblCopies").value)||1, msg=$("lblMsg"), prev=$("lblPrev"), btn=$("lblPrintBtn");
+    btn.disabled=!list.length;
+    if(err){ msg.innerHTML=`<span style="color:var(--bad)">${esc(err)}</span>`; prev.innerHTML=""; return; }
+    if(!list.length){ msg.textContent=""; prev.innerHTML='<div class="muted center">Type a letter and a number.</div>'; return; }
+    const total=list.length*copies;
+    msg.innerHTML=`${list.length>1?`<b>${esc(list[0].code)}</b> through <b>${esc(list[list.length-1].code)}</b> · `:`<b>${esc(list[0].code)}</b> · `}${total} label${total===1?"":"s"}`
+      +(lblKnown(L)?"":` · <span style="color:var(--warn)">${esc(L)} isn't one of the current locations — it prints fine, but the fill report lists it under Other.</span>`);
+    btn.innerHTML=`<i class="ti ti-printer"></i> Print ${total} label${total===1?"":"s"}`;
+    const w=$("lblPrev").parentElement.clientWidth-34, sc=Math.min(1,w/384);
+    prev.innerHTML=`<div style="width:${384*sc}px;height:${192*sc}px;box-shadow:0 0 0 1px var(--line),var(--sh-1);border-radius:6px;overflow:hidden"><div class="lblscale" style="transform:scale(${sc})">${lblHTML(list[0])}</div></div>`
+      +(list.length>1?`<div class="muted" style="font-size:12.5px">+ ${list.length-1} more: ${esc(list.slice(1,6).map(x=>x.code).join(", "))}${list.length>6?"…":""}</div>`:"");
+  },120);
+}
+// Print on 4 × 2 in pages, one label per page.
+function lblPrintList(list){
+  const pa=$("printArea");
+  pa.innerHTML=`<div class="lblprint">${list.map(lblHTML).join("")}</div>`;
+  const st=document.createElement("style"); st.id="lblPage";
+  st.textContent="@page{size:4in 2in;margin:0} @media print{#printArea{padding:0!important} html,body{margin:0!important;padding:0!important}}";
+  document.head.appendChild(st);
   pa.style.display="block";
-  $("qrbox").innerHTML=""; new QRCode($("qrbox"),{ text:"BIN-"+code, width:220, height:220, colorDark:"#000000", colorLight:"#ffffff", correctLevel:QRCode.CorrectLevel.M });
-  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; }, 800); }, 500);
+  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; pa.innerHTML=""; st.remove(); },800); },400);
+}
+async function lblPrint(){
+  const {list}=lblList(); if(!list.length) return;
+  const copies=Number($("lblCopies").value)||1;
+  const all=[]; for(const x of list) for(let i=0;i<copies;i++) all.push(x);
+  if($("lblAdd").checked){ try{ const r=await api("/api/bins/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({codes:list.map(x=>x.code)})}); if(r.added) toast(`${r.added} new bin${r.added===1?"":"s"} added`); }catch(e){} }
+  lblPrintList(all);
+}
+/* ---------- print one bin's label (the Label button on a bin) ---------- */
+function printLabel(code){
+  const c=String(code||"").toUpperCase().trim();
+  const m1=c.match(/^([A-Z]+)-?(\d+)$/), m2=c.match(/^(\d+)-?([A-Z]+)$/);
+  const x = m1?{L:m1[1],n:String(Number(m1[2])),code:c}: m2?{L:m2[2],n:String(Number(m2[1])),code:c} : {L:c.replace(/[^A-Z]/g,"").slice(0,3)||"—",n:c.replace(/\D/g,"")||"—",code:c};
+  lblPrintList([x]);
 }
 </script>
 </body>

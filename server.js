@@ -1475,6 +1475,29 @@ function binShape(key, fallback, sides) {
   const after = LOC_AFTER.includes(loc) || (!LOC_BEFORE.includes(loc) && v.after > v.before);
   return { code: after ? `${num}-${loc}` : `${loc}-${num}`, loc, num: Number(num), known: LOC_ALL.includes(loc) };
 }
+// How each location is written on a label: letters first (R-35) or last (35-T). Auto locations go by their bins.
+app.get("/api/bins/formats", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const auto = {};
+    for (const l of LOC_AUTO) {
+      const r = await db(`SELECT count(*) FILTER (WHERE c ~ ('^' || $1 || '-[0-9]+$'))::int AS before, count(*) FILTER (WHERE c ~ ('^[0-9]+-' || $1 || '$'))::int AS after
+                            FROM (SELECT bin_canon(code) AS c FROM bins UNION ALL SELECT bin_canon(x) FROM item_location, unnest(regexp_split_to_array(bin, '[,;/|]')) x WHERE bin IS NOT NULL) t`, [l]);
+      auto[l] = r.rows[0].after > r.rows[0].before ? "after" : "before";
+    }
+    res.json({ before: LOC_BEFORE, after: LOC_AFTER, auto });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Add many bins at once (label printing). Existing ones are left as they are.
+app.post("/api/bins/batch", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const codes = [...new Set(((req.body && req.body.codes) || []).map((c) => String(c).trim().toUpperCase()).filter((c) => /^[A-Z0-9-]{1,20}$/.test(c)))].slice(0, 500);
+    let added = 0;
+    for (const c of codes) { const r = await db(`INSERT INTO bins (code,label) SELECT $1,$1 WHERE NOT EXISTS (SELECT 1 FROM bins WHERE bin_key(code)=bin_key($1))`, [c]); added += r.rowCount; }
+    res.json({ ok: true, added, total: codes.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/bins/report", async (req, res) => {
   if (!guard(req, res)) return;
   try {
