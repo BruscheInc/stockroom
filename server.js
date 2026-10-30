@@ -1464,12 +1464,16 @@ app.get("/api/bins", async (req, res) => {
 // Which side of the number each warehouse location is written on. Anything else is an old / phased-out location.
 const LOC_BEFORE = ["Q", "S", "R", "D", "E", "A", "C", "F", "G", "I", "J", "RS"];
 const LOC_AFTER = ["T", "L", "B", "U", "UW"];
-function binShape(key, fallback) {
+// Current locations whose side is taken from how their bins are actually written (majority wins).
+const LOC_AUTO = ["H"];
+const LOC_ALL = [...LOC_BEFORE, ...LOC_AFTER, ...LOC_AUTO];
+function binShape(key, fallback, sides) {
   const m = String(key).match(/^([A-Z]+)\|(\d+)$/);
   if (!m) return { code: fallback || key, loc: null, num: null, known: false };
   const [, loc, num] = m;
-  const after = LOC_AFTER.includes(loc);
-  return { code: after ? `${num}-${loc}` : `${loc}-${num}`, loc, num: Number(num), known: after || LOC_BEFORE.includes(loc) };
+  const v = (sides && sides[loc]) || { before: 0, after: 0 };
+  const after = LOC_AFTER.includes(loc) || (!LOC_BEFORE.includes(loc) && v.after > v.before);
+  return { code: after ? `${num}-${loc}` : `${loc}-${num}`, loc, num: Number(num), known: LOC_ALL.includes(loc) };
 }
 app.get("/api/bins/report", async (req, res) => {
   if (!guard(req, res)) return;
@@ -1496,12 +1500,20 @@ app.get("/api/bins/report", async (req, res) => {
         FROM toks t LEFT JOIN q ON q.sku = t.sku LEFT JOIN nb ON nb.sku = t.sku LEFT JOIN stock_verifications sv ON sv.sku = t.sku
        WHERE t.code <> ''`);
     const bins = {};
+    const binRows = (await db(`SELECT bin_key(code) AS k, bin_canon(code) AS c, label, code AS raw FROM bins`)).rows;
+    // How each location is usually written (letters first or last) — decides the side for LOC_AUTO locations.
+    const sides = {};
+    for (const c of [...binRows.map((b) => b.c), ...r.rows.map((x) => x.code_raw)]) {
+      const m1 = String(c || "").match(/^([A-Z]+)-\d+$/), m2 = String(c || "").match(/^\d+-([A-Z]+)$/);
+      const l = m1 ? m1[1] : m2 ? m2[1] : null; if (!l) continue;
+      (sides[l] = sides[l] || { before: 0, after: 0 })[m1 ? "before" : "after"]++;
+    }
     // One bin per location + number, written the house way (R-35, 35-T), however it was typed.
-    for (const b of (await db(`SELECT bin_key(code) AS k, bin_canon(code) AS c, label, code AS raw FROM bins`)).rows) { if (!b.k) continue; if (!bins[b.k]) bins[b.k] = { ...binShape(b.k, b.c), label: b.label && b.label !== b.raw ? b.label : null, items: [] }; }
+    for (const b of binRows) { if (!b.k) continue; if (!bins[b.k]) bins[b.k] = { ...binShape(b.k, b.c, sides), label: b.label && b.label !== b.raw ? b.label : null, items: [] }; }
     const seen = new Set();
     for (const x of r.rows) {
       const k = x.code; if (seen.has(k + "|" + x.sku)) continue; seen.add(k + "|" + x.sku);
-      if (!bins[k]) bins[k] = { ...binShape(k, x.code_raw), label: null, items: [], unlisted: true };
+      if (!bins[k]) bins[k] = { ...binShape(k, x.code_raw, sides), label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
     }
     const out = Object.values(bins).map((b) => {
@@ -1509,7 +1521,7 @@ app.get("/api/bins/report", async (req, res) => {
       return { ...b, skus: b.items.length, units: b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0), unknown: b.items.filter((i) => i.qty == null).length, zero: b.items.filter((i) => i.qty === 0).length };
     });
     out.sort((a, b) => a.units - b.units || a.skus - b.skus || String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
-    res.json({ bins: out, locations: [...LOC_BEFORE, ...LOC_AFTER].sort(), synced: (invSync && invSync.at) || null });
+    res.json({ bins: out, locations: [...LOC_ALL].sort(), synced: (invSync && invSync.at) || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Import existing bin locations from ShipStation (warehouseLocation → app DB). Idempotent.
