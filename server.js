@@ -797,6 +797,18 @@ async function oneTimeFixes() {
     for (const x of plan.slice(0, 25)) console.log(`⏪ ${x.sku}: now "${x.now}" → back to "${x.back_to}"`);
     if (REVERT_APPLY) await once("undo-all-bin-changes-2026-10-30", async () => { const r = await revertApply("Jose"); return `reverted ${r.reverted} items, un-archived ${r.unarchived} bins`; });
   } catch (e) { console.error("⏪ undo-today failed:", e.message); }
+  // Read-only: what did bins look like at 2:20 PM CT (19:20Z) vs now?
+  try {
+    const CUT = "2026-10-30T19:20:00Z";
+    const before = (await db(`SELECT source, count(*)::int n, count(DISTINCT sku)::int skus, min(ts) AS first, max(ts) AS last FROM location_history
+                               WHERE ts >= '2026-10-30T05:00:00Z' AND ts < $1 GROUP BY source ORDER BY source`, [CUT])).rows;
+    console.log(`🕑 changes between midnight and 2:20 PM: ${before.length ? before.map((b) => `${b.source}: ${b.n} rows / ${b.skus} items (${new Date(b.first).toISOString().slice(11,16)}–${new Date(b.last).toISOString().slice(11,16)}Z)`).join(" · ") : "none"}`);
+    const st = (await db(`SELECT DISTINCT ON (h.sku) h.sku, coalesce(h.to_bin,'') AS at220, coalesce(il.bin,'') AS now FROM location_history h LEFT JOIN item_location il ON il.sku=h.sku
+                           WHERE h.ts >= '2026-10-30T05:00:00Z' AND h.ts < $1 ORDER BY h.sku, h.ts DESC, h.id DESC`, [CUT])).rows;
+    const diff = st.filter((x) => x.at220.replace(/\s+/g, "").toUpperCase() !== x.now.replace(/\s+/g, "").toUpperCase());
+    console.log(`🕑 items whose 2:20 PM bin differs from now: ${diff.length}`);
+    for (const x of diff.slice(0, 30)) console.log(`🕑 ${x.sku}: at 2:20 PM "${x.at220}" · now "${x.now}"`);
+  } catch (e) { console.error("🕑 check failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
