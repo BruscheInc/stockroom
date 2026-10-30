@@ -809,6 +809,18 @@ async function oneTimeFixes() {
     console.log(`🕑 items whose 2:20 PM bin differs from now: ${diff.length}`);
     for (const x of diff.slice(0, 30)) console.log(`🕑 ${x.sku}: at 2:20 PM "${x.at220}" · now "${x.now}"`);
   } catch (e) { console.error("🕑 check failed:", e.message); }
+  // Read-only: which bin numbers are taken in each location (bin list + every item's bins), for planning new numbering.
+  try {
+    const r = await db(`WITH codes AS (
+        SELECT bin_key(code) k FROM bins
+        UNION SELECT bin_key(x) FROM item_location, unnest(regexp_split_to_array(bin, '[,;/|]')) x WHERE bin IS NOT NULL AND trim(x) <> ''),
+      parsed AS (SELECT split_part(k,'|',1) loc, NULLIF(split_part(k,'|',2),'')::int num FROM codes WHERE k ~ '^[A-Z]+\|[0-9]+$')
+      SELECT loc, count(*)::int n, min(num) mn, max(num) mx,
+             (SELECT string_agg(r, ',') FROM (SELECT CASE WHEN min(num)=max(num) THEN min(num)::text ELSE min(num)||'-'||max(num) END r
+                FROM (SELECT num, num - row_number() OVER (ORDER BY num) g FROM parsed p2 WHERE p2.loc=p.loc) z GROUP BY g ORDER BY min(num)) q) AS ranges
+        FROM parsed p GROUP BY loc ORDER BY loc`);
+    for (const x of r.rows) console.log(`🔢 ${x.loc}: ${x.n} numbers in use, ${x.mn}–${x.mx} · ${String(x.ranges).slice(0, 400)}`);
+  } catch (e) { console.error("🔢 failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
