@@ -2111,7 +2111,7 @@ async function sendOos(order){
 const SW_MAX=12; let SW_ROWS=[], SW_UID=0, SW_STARTED=false;
 function swRow(id){ return SW_ROWS.find(r=>r.id===id); }
 async function swRebinLine(){ try{ const d=await api("/api/settings/rebin");
-  $("swRebin").innerHTML = d.date ? `Rebinning since <b>${esc(fmtD(d.date+"T12:00:00"))}</b> — anything put in a bin since then is the new bin and stays put. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('${esc(d.date)}')">Change</a>`
+  $("swRebin").innerHTML = d.date ? `Rebinning since <b>${esc(d.exact?fmt(d.at):fmtD(d.date+"T12:00:00"))}</b> — anything put in a bin since then is the new bin and stays put. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('${esc(d.date)}')">Change</a>`
     : `Every item in a bin moves. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('')">Set a rebinning start date</a>`; }catch(e){} }
 function swRebinEdit(cur){ $("swRebin").innerHTML=`Rebinning since <input type="date" id="swRebinDate" value="${esc(cur)}" style="min-height:32px;padding:0 8px"> <button class="btn sec sm" onclick="swRebinSave()">Save</button> <a style="color:var(--muted);cursor:pointer;margin-left:6px" onclick="swRebinLine()">Cancel</a>`; }
 async function swRebinSave(){ const v=$("swRebinDate").value; try{ const r=await api("/api/settings/rebin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date:v})}); if(r.error){ toast(r.error,true); return; } toast("Saved"); swRebinLine(); SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); }); }catch(e){ toast("Couldn't save",true); } }
@@ -2139,7 +2139,7 @@ async function swRepairApply(n){
     if(BR) BR._at=0; SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); });
   }catch(e){ toast("Fix failed",true); }
 }
-function swInit(){ swRepairLoad(); swRebinLine(); if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
+function swInit(){ swRebinLine(); if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
 // "E-17" → "E-18", "534-L" → "535-L": the next bin in the run, written the same way.
 function swNext(code){ const m=String(code||"").match(/^(.*?)(\d+)([^\d]*)$/); return m? m[1]+String(Number(m[2])+1)+m[3] : ""; }
 function swAddRow(focus,from,to){

@@ -791,11 +791,12 @@ async function oneTimeFixes() {
     for (const x of r.rows) console.log(`🔎 MOVED-NEW sku=${x.sku} swap=${x.from_code}→${x.to_code} at=${new Date(x.swapped_at).toISOString()} by=${x.swapped_by} | put into ${x.from_code} at=${new Date(x.put_in_at).toISOString()} by=${x.put_in_by} (${x.put_in_source}) | now in: ${x.now_bin}`);
     return `${r.rows.length} of ${total.n}`;
   });
-  try { const { plan, unclear } = await repairPlan(); const c = {}; for (const x of plan) c[x.why.replace(/swap .*/, "swap took new-bin items")] = (c[x.why.replace(/swap .*/, "swap took new-bin items")] || 0) + 1;
-    console.log(`🩺 repair dry run: ${plan.length} to fix ${JSON.stringify(c)} · ${unclear.length} unclear (left alone)`);
-    for (const x of plan.slice(0, 40)) console.log(`🩺 FIX ${x.sku}: now "${x.now}" → should be "${x.intended}" (${x.why})`);
-    for (const x of unclear.slice(0, 20)) console.log(`🩺 UNCLEAR ${x.sku}: now "${x.now}" · last app move ${x.last}`);
-  } catch (e) { console.error("🩺 repair dry run failed:", e.message); }
+  try {
+    const { plan, changed_today, archived_today } = await revertPlan();
+    console.log(`⏪ undo-today dry run: ${changed_today} items changed today · ${plan.length} not at their start-of-day bin · ${archived_today.length} bins archived today (${archived_today.join(", ")})`);
+    for (const x of plan.slice(0, 25)) console.log(`⏪ ${x.sku}: now "${x.now}" → back to "${x.back_to}"`);
+    if (REVERT_APPLY) await once("undo-all-bin-changes-2026-10-30", async () => { const r = await revertApply("Jose"); return `reverted ${r.reverted} items, un-archived ${r.unarchived} bins`; });
+  } catch (e) { console.error("⏪ undo-today failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
@@ -1544,7 +1545,9 @@ async function binSkus(key) {
 // a swap only moves what was in the OLD bin and leaves the new bin's items where they are.
 async function rebinSince() {
   const v = ((await db(`SELECT value FROM sr_settings WHERE key='rebin_since'`)).rows[0] || {}).value;
-  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(v)) { const at = new Date(v); return isNaN(at) ? null : { date: v.slice(0, 10), at, exact: true }; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
   const d = new Date(`${v}T00:00:00Z`); return { date: v, at: new Date(d.getTime() - tzOffsetMin(d, "America/Chicago") * 60000) };
 }
 async function swapPlan(fromRaw, toRaw) {
@@ -1562,7 +1565,7 @@ async function swapPlan(fromRaw, toRaw) {
   // When each item was last put into this bin number, and by whom — tells an old bin's stock from a new bin
   // that reuses the same number (old F-25 vs new F-25).
   const since = skus.length ? Object.fromEntries((await db(`SELECT DISTINCT ON (h.sku) h.sku, h.ts, h.user_name, h.source FROM location_history h
-      WHERE h.sku = ANY($1)
+      WHERE h.sku = ANY($1) AND h.source NOT IN ('revert')
         AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(h.to_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $2)
         AND NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(h.from_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $2)
       ORDER BY h.sku, h.ts DESC`, [skus, from.key])).rows.map((x) => [x.sku, x])) : {};
@@ -1683,6 +1686,40 @@ app.get("/api/bins/archived", async (req, res) => {
     res.json({ bins: r.rows, total: n });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+/* ---- Undo every bin change made on 2026-10-30 (rebinning restart) ---- */
+const REVERT_SINCE = "2026-10-30T05:00:00Z";          // midnight Central
+const REVERT_APPLY = false;                            // dry run first
+async function revertPlan() {
+  const first = (await db(`SELECT DISTINCT ON (sku) sku, from_bin, ts FROM location_history
+                            WHERE ts >= $1 AND source <> 'revert' ORDER BY sku, ts, id`, [REVERT_SINCE])).rows;
+  const cur = Object.fromEntries((await db(`SELECT sku, coalesce(bin,'') AS bin FROM item_location WHERE sku = ANY($1)`, [first.map((x) => x.sku)])).rows.map((x) => [x.sku, x.bin]));
+  const strs = [...new Set([...first.map((x) => x.from_bin || ""), ...Object.values(cur)])];
+  const K = Object.fromEntries((await db(`SELECT s, coalesce((SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT DISTINCT bin_key(x) k FROM unnest(regexp_split_to_array(s, '[,;/|]')) x WHERE trim(x) <> '') q), '') AS keys FROM unnest($1::text[]) s`, [strs])).rows.map((x) => [x.s, x.keys]));
+  const plan = [];
+  for (const f of first) {
+    const start = f.from_bin || "", now = cur[f.sku] ?? "";
+    if ((K[start] ?? "") === (K[now] ?? "")) continue;
+    plan.push({ sku: f.sku, now, back_to: start });
+  }
+  const arch = (await db(`SELECT code FROM bin_archive WHERE archived_at >= $1 ORDER BY code`, [REVERT_SINCE])).rows.map((x) => x.code);
+  return { plan, changed_today: first.length, archived_today: arch };
+}
+async function revertApply(by) {
+  const { plan, archived_today } = await revertPlan();
+  for (const x of plan) {
+    await db(`UPDATE item_location SET bin=$2, updated_at=now(), updated_by=$3 WHERE sku=$1`, [x.sku, x.back_to || null, by]);
+    await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source,note) VALUES ($1,$2,$3,$4,'revert','Undo all bin changes made 2026-10-30')`, [x.sku, x.now || null, x.back_to || null, by]);
+    if (x.back_to) await registerBinTokens(x.back_to);
+    await ssQueuePush(x.sku, x.back_to || "");
+  }
+  // make sure ShipStation matches for everything touched today, including items Stockroom already shows right
+  const touched = (await db(`SELECT il.sku, coalesce(il.bin,'') AS bin FROM item_location il WHERE il.sku IN (SELECT DISTINCT sku FROM location_history WHERE ts >= $1)`, [REVERT_SINCE])).rows;
+  for (const t of touched) await ssQueuePush(t.sku, t.bin);
+  await db(`DELETE FROM bin_archive WHERE archived_at >= $1`, [REVERT_SINCE]);
+  // start over: from now on, only what's put in a bin AFTER this counts as the new bin
+  await db(`INSERT INTO sr_settings (key,value,updated_by,updated_at) VALUES ('rebin_since',$1,$2,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by, updated_at=now()`, [new Date().toISOString(), by]);
+  return { reverted: plan.length, unarchived: archived_today.length };
+}
 /* ---- Repair for 2026-10-30: moves undone by the ShipStation import after restarts, and swaps that took a new bin's items ---- */
 const REPAIR_SINCE = "2026-10-30T05:00:00Z";
 async function repairPlan() {
@@ -1745,7 +1782,7 @@ app.all("/api/admin/repair-2026-10-30", async (req, res) => {
     res.json({ ok: true, applied: apply, fixed, to_fix: plan.length, counts, plan: plan.slice(0, 500), unclear: unclear.slice(0, 200), unclear_count: unclear.length, shipstation_pending: await ssqCount() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get("/api/settings/rebin", async (req, res) => { if (!guard(req, res)) return; try { const r = await rebinSince(); res.json({ date: r ? r.date : null }); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.get("/api/settings/rebin", async (req, res) => { if (!guard(req, res)) return; try { const r = await rebinSince(); res.json({ date: r ? r.date : null, at: r ? r.at : null, exact: !!(r && r.exact) }); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.post("/api/settings/rebin", async (req, res) => {
   if (!guard(req, res)) return;
   try {
