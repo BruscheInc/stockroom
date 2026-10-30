@@ -316,6 +316,13 @@
     .toast{bottom:28px}
     .oskfab{bottom:24px}
   }
+  .swgrid{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:end}
+  .swgrid>div{min-width:0}
+  .swgrid input{width:100%;min-width:0;min-height:46px;font-size:18px;font-weight:700;text-transform:uppercase;padding:0 12px}
+  .swarrow{padding-bottom:12px;color:var(--faint)}.swarrow .ti{font-size:22px}
+  @media (max-width:520px){ .swgrid{grid-template-columns:1fr} .swarrow{display:none} }
+  .swhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:15px}
+  .swhead .pill{font-size:15px;padding:5px 12px}
   .lblform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
   .lblform input,.lblform select{width:100%;min-height:46px;padding:0 12px;font-size:18px;font-weight:700}
   #lblLetter{text-transform:uppercase}
@@ -543,6 +550,23 @@
     </div>
     <div id="actList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-binswap" class="hidden">
+    <div class="card">
+      <h1 class="ph">Bin swap</h1>
+      <div class="phsub">Move everything in one bin to another bin in one go — then drop the old bin number.</div>
+      <div class="swgrid">
+        <div><label class="lab" for="swFrom">Move everything from</label>
+          <div class="moverow" style="margin:0"><input id="swFrom" data-osk="1" inputmode="none" placeholder="E-17" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swQueue()" onkeydown="if(event.key==='Enter')$('swTo').focus()">
+          <button class="btn sec" onclick="swScan('swFrom')" title="Scan the bin label"><i class="ti ti-camera"></i></button></div></div>
+        <div class="swarrow"><i class="ti ti-chevron-right"></i></div>
+        <div><label class="lab" for="swTo">Into</label>
+          <div class="moverow" style="margin:0"><input id="swTo" data-osk="1" inputmode="none" placeholder="R-35" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swQueue()" onkeydown="if(event.key==='Enter')swLoad()">
+          <button class="btn sec" onclick="swScan('swTo')" title="Scan the bin label"><i class="ti ti-camera"></i></button></div></div>
+      </div>
+      <div id="sreader" style="width:100%;border-radius:14px;overflow:hidden;margin-top:10px;display:none;background:#000"></div>
+    </div>
+    <div id="swPlan"></div>
+  </section>
   <section id="tab-labels" class="hidden">
     <div class="card">
       <h1 class="ph">Print bin labels</h1>
@@ -617,6 +641,7 @@
     <div class="menusec">Bins</div>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><i class="ti ti-building-warehouse"></i>Bins</button>
     <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><i class="ti ti-chart-bar"></i>Bin fill report</button>
+    <button class="menuitem" data-tab="binswap" onclick="menuGo('binswap')"><i class="ti ti-arrows-sort"></i>Bin swap</button>
     <button class="menuitem" data-tab="labels" onclick="menuGo('labels')"><i class="ti ti-printer"></i>Print bin labels</button>
     <div class="menusec adminonly hidden">Admin</div>
     <button class="menuitem adminonly hidden" data-tab="users" onclick="menuGo('users')"><i class="ti ti-users"></i>Users</button>
@@ -694,7 +719,7 @@ else {
 function showTab(t){
   if(t==="users" && CURRENT_ROLE!=="admin") t="scan";
   const pt=$("pageTitle"); if(pt) pt.textContent=PAGE_TITLES[t]||"";
-  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","labels","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","binswap","labels","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
@@ -706,6 +731,7 @@ function showTab(t){
   if(t==="activity"){ loadActivity(); }
   if(t==="users"){ loadUsers(); }
   if(t==="labels"){ lblInit(); }
+  if(t==="binswap"){ swInit(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -783,8 +809,8 @@ let lastCode=null;
    were, so ‹ Back (or the phone's back gesture) returns to the same list at the same scroll position. */
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
-const TAB_NAMES={labels:"bin labels",scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
-const PAGE_TITLES={labels:"Print bin labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
+const TAB_NAMES={binswap:"bin swap",labels:"bin labels",scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
+const PAGE_TITLES={binswap:"Bin swap",labels:"Print bin labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -1008,6 +1034,7 @@ function renderBin(d){
       <div style="display:flex;align-items:center;gap:10px">
         <span class="pill bin" style="font-size:15px"><i class="ti ti-building-warehouse"></i> ${b}</span>
         <div class="sub" style="flex:1">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
+        <button class="btn sec" onclick="swFromBin('${b}')"><i class="ti ti-arrows-sort"></i> Move all</button>
         <button class="btn ghost" onclick="clearBin('${b}')">Remove all</button>
         <button class="btn sec" onclick="printLabel('${b}','${esc(d.label||"")}')"><i class="ti ti-printer"></i> Label</button>
       </div>
@@ -2042,6 +2069,62 @@ async function sendOos(order){
 }
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
+/* ---------- bin swap ---------- */
+let SW_T=null, SW_PLAN=null;
+function swInit(){ swLoad(); if(!IS_TOUCH) setTimeout(()=>{ const f=$("swFrom"); if(f&&!f.value) f.focus(); },60); }
+function swFromBin(bin){ $("swFrom").value=bin; $("swTo").value=""; goTab("binswap"); setTimeout(()=>$("swTo").focus(),80); }
+function swQueue(){ clearTimeout(SW_T); SW_T=setTimeout(swLoad,350); }
+function swScan(id){ startCamera((code)=>{ $(id).value=String(code).replace(/^BIN[-:]/i,""); swLoad(); if(id==="swFrom"&&!$("swTo").value) $("swTo").focus(); },{reader:"sreader",btn:"swNoBtn",note:"swPlan"}); }
+async function swLoad(){
+  const from=$("swFrom").value.trim(), to=$("swTo").value.trim(), el=$("swPlan");
+  if(!from){ SW_PLAN=null; el.innerHTML=""; return; }
+  el.innerHTML='<div class="card center muted">Checking bins…</div>';
+  let d; try{ d=await api(`/api/bins/swap?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`); }catch(e){ el.innerHTML='<div class="card center muted">Couldn\'t load — try again.</div>'; return; }
+  if(from!==$("swFrom").value.trim()||to!==$("swTo").value.trim()) return;      // typing moved on
+  if(d.error){ el.innerHTML=`<div class="card center muted">${esc(d.error)}</div>`; return; }
+  SW_PLAN=d;
+  const n=d.items.length, units=d.items.reduce((s,i)=>s+(Number(i.qty)||0),0);
+  const rows=d.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer"><td><div class="mono">${esc(i.sku)}</div><div class="muted" style="font-size:12px">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · <b>already in ${esc(d.to)}</b>`:""}</div></td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`).join("");
+  const head=`<div class="swhead"><span class="pill bin">${esc(d.from)}</span><i class="ti ti-chevron-right muted"></i>${d.to?`<span class="pill bin">${esc(d.to)}</span>`:'<span class="muted">pick the new bin</span>'}</div>`;
+  if(d.same){ el.innerHTML=`<div class="card">${head}<p style="color:var(--bad);margin:10px 0 0">That's the same bin.</p></div>`; return; }
+  if(!n){
+    el.innerHTML=`<div class="card">${head}<p class="muted" style="margin:10px 0 12px"><b>${esc(d.from)}</b> is empty — nothing to move.</p>
+      ${d.from_listed?`<button class="btn sec danger" onclick="swRemoveEmpty()"><i class="ti ti-trash"></i> Remove ${esc(d.from)} from the bin list</button>`:'<div class="note" style="text-align:left;margin:0">It isn\'t on the bin list either.</div>'}</div>`;
+    return;
+  }
+  el.innerHTML=`<div class="card">${head}
+      <div class="muted" style="margin:8px 0 4px">${n} item${n===1?"":"s"} · ${units} unit${units===1?"":"s"} on hand${d.to?` · ${esc(d.to)} has ${d.to_count} item${d.to_count===1?"":"s"} now`:""}</div>
+      <table style="margin-top:6px"><thead><tr><th>Item</th><th class="n">On hand</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    <div class="card">
+      <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> Remove <b style="margin:0 3px">${esc(d.from)}</b> from the bin list when it's empty</label>
+      <div class="note" style="text-align:left;margin:8px 0 12px">Each item keeps any other bins it's in. Every move is in the item's location history and is sent to ShipStation.</div>
+      <button class="btn wide" id="swGo" ${d.to?"":"disabled"} onclick="swGo()"><i class="ti ti-arrows-sort"></i> ${d.to?`Move ${n} item${n===1?"":"s"} to ${esc(d.to)}`:"Pick the new bin"}</button>
+    </div>`;
+}
+async function swGo(){
+  const d=SW_PLAN; if(!d||!d.to) return;
+  if(!confirm(`Move all ${d.items.length} item${d.items.length===1?"":"s"} from ${d.from} to ${d.to}?`)) return;
+  const b=$("swGo"); b.disabled=true; b.textContent="Moving…";
+  try{
+    const r=await api("/api/bins/swap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:d.from,to:d.to,removeFrom:$("swRemove").checked})});
+    if(r.error){ toast(r.error,true); b.disabled=false; b.textContent="Try again"; return; }
+    $("swPlan").innerHTML=`<div class="card">
+      <div class="swhead"><span class="pill bin">${esc(r.from)}</span><i class="ti ti-chevron-right muted"></i><span class="pill bin">${esc(r.to)}</span></div>
+      <p style="margin:12px 0 4px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved to ${esc(r.to)}.</b>${r.removed?` ${esc(r.from)} is off the bin list.`:""}</p>
+      ${r.failed.length?`<p style="color:var(--bad);margin:4px 0">${r.failed.length} didn't move: ${esc(r.failed.map(f=>f.sku).join(", "))}</p>`:""}
+      <p class="muted" style="margin:4px 0 14px">ShipStation is being updated in the background${r.shipstation_pending?` (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min)`:""}.</p>
+      <div class="moverow"><button class="btn sec" onclick="lookup('BIN-${esc(r.to)}')"><i class="ti ti-building-warehouse"></i> Open ${esc(r.to)}</button><button class="btn" onclick="$('swFrom').value='';$('swTo').value='';swLoad();$('swFrom').focus()">New swap</button></div></div>`;
+    toast(`Moved ${r.moved} to ${r.to}`);
+  }catch(e){ toast("Swap failed",true); b.disabled=false; b.textContent="Try again"; }
+}
+async function swRemoveEmpty(){
+  const d=SW_PLAN; if(!d) return;
+  if(!confirm(`Remove ${d.from} from the bin list?`)) return;
+  try{ const r=await api("/api/bins/swap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:d.from,removeFrom:true})});
+    if(r.error){ toast(r.error,true); return; } toast(r.removed?`${r.from} removed`:"Nothing to remove"); swLoad(); }
+  catch(e){ toast("Failed",true); }
+}
 /* ---------- bin labels (2 × 4 in thermal) ---------- */
 let LBL_FMT=null;
 async function lblInit(){

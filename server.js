@@ -561,12 +561,18 @@ async function verificationMap(skus) {
 const SS_KEY = process.env.SHIPSTATION_API_KEY || "";
 const SS_SECRET = process.env.SHIPSTATION_API_SECRET || "";
 function ssConfigured() { return !!(SS_KEY && SS_SECRET); }
-async function ssReq(method, pathname, body) {
+async function ssReq(method, pathname, body, tries = 0) {
   const auth = "Basic " + Buffer.from(`${SS_KEY}:${SS_SECRET}`).toString("base64");
   const r = await fetch(`https://ssapi.shipstation.com${pathname}`, {
     method, headers: { Authorization: auth, "Content-Type": "application/json", Accept: "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
+  // 40 requests/minute: when ShipStation says slow down, wait the seconds it asks for and try again.
+  if (r.status === 429 && tries < 3) {
+    const wait = Math.min(65, Number(r.headers.get("x-rate-limit-reset")) || 20) + 1;
+    await new Promise((ok) => setTimeout(ok, wait * 1000));
+    return ssReq(method, pathname, body, tries + 1);
+  }
   const txt = await r.text();
   let j; try { j = txt ? JSON.parse(txt) : {}; } catch { j = { raw: txt }; }
   if (!r.ok) throw new Error(`ShipStation ${r.status}: ${(j && (j.Message || j.message)) || txt.slice(0, 160)}`);
@@ -649,6 +655,21 @@ async function pollShipments(days) {
   return shipPoll;
 }
 
+/* ---- ShipStation update queue: big moves (bin swaps) update ShipStation in the background, one at a time ---- */
+const SSQ = new Map();          // sku -> location (latest wins)
+let ssqRunning = false, ssqDone = 0, ssqFailed = [];
+function ssQueuePush(sku, loc) { SSQ.delete(sku); SSQ.set(sku, loc); if (!ssqRunning) ssqRun(); }
+async function ssqRun() {
+  ssqRunning = true;
+  while (SSQ.size) {
+    const [sku, loc] = SSQ.entries().next().value; SSQ.delete(sku);
+    try { await ssSetWarehouseLocation(sku, loc); ssqDone++; }
+    catch (e) { ssqFailed.push({ sku, loc, error: e.message, ts: new Date().toISOString() }); ssqFailed = ssqFailed.slice(-50); console.error(`📦 ShipStation update ${sku} → ${loc} failed:`, e.message); }
+    await new Promise((ok) => setTimeout(ok, 4500));          // 3 calls per item → stays under 40/min
+  }
+  ssqRunning = false;
+}
+
 /* --------------------------------------- Data operations --------------------------------------- */
 async function getItemLocation(sku) {
   const r = await db(`SELECT sku,bin,title,barcode,updated_at,updated_by FROM item_location WHERE sku=$1`, [sku]);
@@ -660,7 +681,7 @@ async function getHistory(sku, limit = 25) {
 }
 // Set/add/remove an item's bin. Pass ONE of: toBin (replace whole location), addBin (add a token),
 // removeBin (drop a token). Locations can be compound, e.g. "1008-L, G-5".
-async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, source }) {
+async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, source, batch }) {
   if (!sku) throw new Error("sku required");
   const cur = await getItemLocation(sku);
   const fromBin = cur ? cur.bin : null;
@@ -679,7 +700,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   finalBin = finalBin || null;
   // enrich title/barcode from Shopify (best-effort) so the DB row is self-describing
   let title = cur?.title || null, barcode = cur?.barcode || null;
-  try { const f = (await shopifyFind({ sku }))[0]; if (f && !f.error) { title = f.title || title; barcode = f.barcode || barcode; } } catch {}
+  if (!batch) { try { const f = (await shopifyFind({ sku }))[0]; if (f && !f.error) { title = f.title || title; barcode = f.barcode || barcode; } } catch {} }
   await db(
     `INSERT INTO item_location (sku,bin,title,barcode,updated_at,updated_by) VALUES ($1,$2,$3,$4,now(),$5)
      ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE($3,item_location.title), barcode=COALESCE($4,item_location.barcode), updated_at=now(), updated_by=$5`,
@@ -692,7 +713,8 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   if (finalBin) await registerBinTokens(finalBin);
   // Push to ShipStation (best-effort — never block the local move on it).
   let shipstation = { pushed: false };
-  if (ssConfigured()) {
+  if (batch && ssConfigured()) { ssQueuePush(sku, finalBin || ""); shipstation = { queued: true }; }
+  else if (ssConfigured()) {
     try { const r = await ssSetWarehouseLocation(sku, finalBin || ""); shipstation = { pushed: true, ...r }; }
     catch (e) { shipstation = { pushed: false, error: e.message }; }
   }
@@ -1425,6 +1447,69 @@ app.post("/api/move", async (req, res) => {
     res.json(await moveItem({ sku, toBin, addBin, removeBin, user: actorOf(req), note, qtySeen, source: "scan" }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Bin swap — move everything in one bin to another (E-17 → R-35). Bins match however they were typed
+// (E-17 = E17 = E-017); each item keeps its other bins; the old bin can be dropped from the bin list.
+async function houseCode(raw) {
+  const r = (await db(`SELECT bin_key($1) AS k, bin_canon($1) AS c`, [String(raw || "").replace(/^BIN[-:]/i, "")])).rows[0];
+  if (!r || !r.c) return null;
+  return { code: binShape(r.k, r.c, null).code, key: r.k };
+}
+async function binSkus(key) {
+  return (await db(`SELECT il.sku, il.bin, il.title FROM item_location il
+                     WHERE il.bin IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $1)
+                     ORDER BY il.sku`, [key])).rows;
+}
+async function swapPlan(fromRaw, toRaw) {
+  const from = await houseCode(fromRaw), to = toRaw ? await houseCode(toRaw) : null;
+  if (!from) throw new Error("Enter the bin to empty.");
+  const rows = await binSkus(from.key);
+  const skus = rows.map((r) => r.sku);
+  const q = skus.length ? (await db(`SELECT sku, max(title) AS title, max(variant) AS variant,
+       SUM(GREATEST(on_hand,0)) FILTER (WHERE upper(coalesce(status,''))='ACTIVE')::int AS act, SUM(GREATEST(on_hand,0))::int AS allq, bool_or(upper(coalesce(status,''))='ACTIVE') AS has_active
+       FROM stock_items WHERE sku = ANY($1) GROUP BY sku`, [skus])).rows : [];
+  const qs = Object.fromEntries(q.map((x) => [x.sku, x]));
+  const toRows = to ? await binSkus(to.key) : [];
+  const keysOf = async (bin) => (await db(`SELECT trim(x) AS t, bin_key(x) AS k FROM unnest(regexp_split_to_array($1, '[,;/|]')) x WHERE trim(x) <> ''`, [bin])).rows;
+  const items = [];
+  for (const r of rows) {
+    const toks = await keysOf(r.bin);
+    const others = toks.filter((t) => t.k !== from.key).map((t) => t.t);
+    let next = toks.map((t) => (t.k === from.key ? (to ? to.code : null) : t.t)).filter(Boolean);
+    const seen = new Set(); next = next.filter((t) => { const k = t.toUpperCase().replace(/[\s-]/g, ""); if (seen.has(k)) return false; seen.add(k); return true; });
+    const x = qs[r.sku] || {};
+    items.push({ sku: r.sku, title: x.title || r.title, variant: x.variant || null, qty: x.has_active ? x.act : (x.allq ?? null), inactive: x.sku ? !x.has_active : false,
+      bin: r.bin, other_bins: others, next: next.join(", "), already_in_to: !!(to && toks.some((t) => t.k === to.key)) });
+  }
+  const listed = (await db(`SELECT 1 FROM bins WHERE bin_key(code) = $1`, [from.key])).rows.length > 0;
+  return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed };
+}
+app.get("/api/bins/swap", async (req, res) => {
+  if (!guard(req, res)) return;
+  try { res.json(await swapPlan(req.query.from, req.query.to)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post("/api/bins/swap", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { from, to, removeFrom } = req.body || {};
+    const plan = await swapPlan(from, to);
+    if (!plan.to && plan.items.length) return res.status(400).json({ error: "Enter the bin to move everything into." });
+    if (plan.same) return res.status(400).json({ error: "That's the same bin." });
+    const by = actorOf(req), note = plan.to ? `Bin swap ${plan.from} → ${plan.to}` : `Removed bin ${plan.from}`;
+    let moved = 0; const failed = [];
+    for (const it of plan.items) {
+      try { await moveItem({ sku: it.sku, toBin: it.next, user: by, source: "swap", note, batch: true }); moved++; }
+      catch (e) { failed.push({ sku: it.sku, error: e.message }); }
+    }
+    if (plan.to) await registerBinTokens(plan.to);
+    let removed = false;
+    if (removeFrom && !failed.length && !(await binSkus(plan.from_key)).length) {
+      removed = (await db(`DELETE FROM bins WHERE bin_key(code) = $1`, [plan.from_key])).rowCount > 0;
+    }
+    res.json({ ok: true, from: plan.from, to: plan.to, moved, failed, removed, shipstation_pending: SSQ.size });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/shipstation-queue", (req, res) => { if (!guard(req, res)) return; res.json({ pending: SSQ.size, running: ssqRunning, done: ssqDone, failed: ssqFailed.slice(-10) }); });
 // Remove a bin from EVERY item that has it (clear the whole bin).
 app.post("/api/bin-clear", async (req, res) => {
   if (!guard(req, res)) return;
