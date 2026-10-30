@@ -592,6 +592,7 @@
       <button class="btn wide" id="swGo" disabled onclick="swGo()"><i class="ti ti-arrows-sort"></i> Move</button>
     </div>
     <div id="swPlan"></div>
+    <div id="swRepair"></div>
     <div class="sectlabel">Archive a bin</div>
     <div class="card">
       <div class="moverow" style="margin:0"><input id="swArchIn" data-osk="1" inputmode="none" placeholder="Bin to archive (e.g. E-17)" autocomplete="off" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase" oninput="swArchCheck()" onkeydown="if(event.key==='Enter')swArchive()">
@@ -2114,7 +2115,31 @@ async function swRebinLine(){ try{ const d=await api("/api/settings/rebin");
     : `Every item in a bin moves. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('')">Set a rebinning start date</a>`; }catch(e){} }
 function swRebinEdit(cur){ $("swRebin").innerHTML=`Rebinning since <input type="date" id="swRebinDate" value="${esc(cur)}" style="min-height:32px;padding:0 8px"> <button class="btn sec sm" onclick="swRebinSave()">Save</button> <a style="color:var(--muted);cursor:pointer;margin-left:6px" onclick="swRebinLine()">Cancel</a>`; }
 async function swRebinSave(){ const v=$("swRebinDate").value; try{ const r=await api("/api/settings/rebin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date:v})}); if(r.error){ toast(r.error,true); return; } toast("Saved"); swRebinLine(); SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); }); }catch(e){ toast("Couldn't save",true); } }
-function swInit(){ swRebinLine(); if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
+// One-off: review and fix today's moves that were undone or took a new bin's items (admins).
+async function swRepairLoad(){
+  const el=$("swRepair"); if(!el||CURRENT_ROLE!=="admin") return;
+  let d; try{ d=await api("/api/admin/repair-2026-10-30"); }catch(e){ return; }
+  if(d.error||!d.to_fix){ el.innerHTML=""; return; }
+  const reasons=Object.entries(d.counts).map(([k,v])=>`${v} · ${esc(k)}`).join("<br>");
+  el.innerHTML=`<div class="card" style="border-color:#F5D9AE;background:var(--warn-soft)">
+    <b style="font-size:16px"><i class="ti ti-alert-triangle"></i> ${d.to_fix} item${d.to_fix===1?"":"s"} from today's bin moves aren't where they should be</b>
+    <div style="font-size:13.5px;margin:6px 0 10px">${reasons}</div>
+    <a style="color:var(--accent2);cursor:pointer;font-size:13.5px" onclick="const t=document.getElementById('swRepList');t.classList.toggle('hidden');this.textContent=t.classList.contains('hidden')?'Show the list':'Hide the list'">Show the list</a>
+    <div id="swRepList" class="hidden" style="max-height:340px;overflow:auto;margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px">
+      <table style="font-size:12.5px"><thead><tr><th>SKU</th><th>Now</th><th>Goes back to</th></tr></thead><tbody>${d.plan.map(x=>`<tr><td class="mono">${esc(x.sku)}<div class="muted" style="font-size:11.5px">${esc(x.why)}</div></td><td>${esc(x.now||"—")}</td><td><b>${esc(x.intended||"—")}</b></td></tr>`).join("")}</tbody></table></div>
+    ${d.unclear_count?`<div class="muted" style="font-size:12.5px;margin-top:8px">${d.unclear_count} other item${d.unclear_count===1?"":"s"} changed in a way I can't be sure about — left alone.</div>`:""}
+    <button class="btn wide" style="margin-top:12px" onclick="swRepairApply(${d.to_fix})"><i class="ti ti-check"></i> Fix these ${d.to_fix} items</button>
+  </div>`;
+}
+async function swRepairApply(n){
+  if(!confirm(`Put ${n} items back where they should be? ShipStation gets updated in the background.`)) return;
+  try{ const r=await api("/api/admin/repair-2026-10-30",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apply:true})});
+    if(r.error){ toast(r.error,true); return; }
+    toast(`Fixed ${r.fixed} items`); $("swRepair").innerHTML=`<div class="card"><b>Fixed ${r.fixed} items.</b> <span class="muted">ShipStation is being updated in the background (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min).</span></div>`;
+    if(BR) BR._at=0; SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); });
+  }catch(e){ toast("Fix failed",true); }
+}
+function swInit(){ swRepairLoad(); swRebinLine(); if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
 // "E-17" → "E-18", "534-L" → "535-L": the next bin in the run, written the same way.
 function swNext(code){ const m=String(code||"").match(/^(.*?)(\d+)([^\d]*)$/); return m? m[1]+String(Number(m[2])+1)+m[3] : ""; }
 function swAddRow(focus,from,to){

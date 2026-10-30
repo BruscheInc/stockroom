@@ -120,6 +120,7 @@ async function migrate() {
                 ELSE c END FROM (SELECT bin_canon(t) AS c) s $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
   // Archived bins: hidden from the bin list and reports (keyed by bin identity, so any spelling matches). Reversible.
+  await db(`CREATE TABLE IF NOT EXISTS ss_queue (sku TEXT PRIMARY KEY, loc TEXT, queued_at TIMESTAMPTZ DEFAULT now(), attempts INT DEFAULT 0, last_error TEXT)`);
   await db(`CREATE TABLE IF NOT EXISTS sr_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TIMESTAMPTZ DEFAULT now())`);
   await db(`INSERT INTO sr_settings (key,value,updated_by) VALUES ('rebin_since','2026-10-30','setup') ON CONFLICT (key) DO NOTHING`);
   await db(`CREATE TABLE IF NOT EXISTS bin_archive (key TEXT PRIMARY KEY, code TEXT, archived_by TEXT, archived_at TIMESTAMPTZ DEFAULT now(), items_cleared INT DEFAULT 0)`);
@@ -659,18 +660,35 @@ async function pollShipments(days) {
   return shipPoll;
 }
 
-/* ---- ShipStation update queue: big moves (bin swaps) update ShipStation in the background, one at a time ---- */
-const SSQ = new Map();          // sku -> location (latest wins)
+/* ---- ShipStation update queue: big moves (bin swaps) update ShipStation in the background, one at a time.
+   Kept in the database (ss_queue) so a restart or deploy never loses a pending update — and the ShipStation
+   import skips any SKU that still has one waiting, so it can't put an old bin back. ---- */
 let ssqRunning = false, ssqDone = 0, ssqFailed = [];
-function ssQueuePush(sku, loc) { SSQ.delete(sku); SSQ.set(sku, loc); if (!ssqRunning) ssqRun(); }
+async function ssqCount() { try { return (await db(`SELECT count(*)::int n FROM ss_queue`)).rows[0].n; } catch { return 0; } }
+async function ssQueuePush(sku, loc) {
+  await db(`INSERT INTO ss_queue (sku,loc,queued_at,attempts) VALUES ($1,$2,now(),0)
+            ON CONFLICT (sku) DO UPDATE SET loc=EXCLUDED.loc, queued_at=now(), attempts=0, last_error=NULL`, [sku, loc || ""]);
+  if (!ssqRunning) ssqRun();
+}
 async function ssqRun() {
+  if (ssqRunning || !ssConfigured()) return;
   ssqRunning = true;
-  while (SSQ.size) {
-    const [sku, loc] = SSQ.entries().next().value; SSQ.delete(sku);
-    try { await ssSetWarehouseLocation(sku, loc); ssqDone++; }
-    catch (e) { ssqFailed.push({ sku, loc, error: e.message, ts: new Date().toISOString() }); ssqFailed = ssqFailed.slice(-50); console.error(`📦 ShipStation update ${sku} → ${loc} failed:`, e.message); }
-    await new Promise((ok) => setTimeout(ok, 4500));          // 3 calls per item → stays under 40/min
-  }
+  try {
+    for (;;) {
+      const j = (await db(`SELECT sku, loc, attempts FROM ss_queue WHERE attempts < 5 ORDER BY queued_at LIMIT 1`)).rows[0];
+      if (!j) break;
+      try {
+        await ssSetWarehouseLocation(j.sku, j.loc); ssqDone++;
+        await db(`DELETE FROM ss_queue WHERE sku=$1 AND loc=$2`, [j.sku, j.loc]);     // a newer location queued meanwhile stays
+      } catch (e) {
+        await db(`UPDATE ss_queue SET attempts=attempts+1, last_error=$2 WHERE sku=$1`, [j.sku, e.message.slice(0, 300)]);
+        ssqFailed.push({ sku: j.sku, loc: j.loc, error: e.message, ts: new Date().toISOString() }); ssqFailed = ssqFailed.slice(-50);
+        console.error(`📦 ShipStation update ${j.sku} → ${j.loc} failed:`, e.message);
+        if (/no ShipStation product/i.test(e.message)) await db(`DELETE FROM ss_queue WHERE sku=$1`, [j.sku]);   // nothing to update there
+      }
+      await new Promise((ok) => setTimeout(ok, 4500));          // 3 calls per item → stays under 40/min
+    }
+  } catch (e) { console.error("📦 ShipStation queue error:", e.message); }
   ssqRunning = false;
 }
 
@@ -717,7 +735,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   if (finalBin) { await registerBinTokens(finalBin); await unarchiveTokens(finalBin, user); }
   // Push to ShipStation (best-effort — never block the local move on it).
   let shipstation = { pushed: false };
-  if (batch && ssConfigured()) { ssQueuePush(sku, finalBin || ""); shipstation = { queued: true }; }
+  if (batch && ssConfigured()) { await ssQueuePush(sku, finalBin || ""); shipstation = { queued: true }; }
   else if (ssConfigured()) {
     try { const r = await ssSetWarehouseLocation(sku, finalBin || ""); shipstation = { pushed: true, ...r }; }
     catch (e) { shipstation = { pushed: false, error: e.message }; }
@@ -773,6 +791,11 @@ async function oneTimeFixes() {
     for (const x of r.rows) console.log(`🔎 MOVED-NEW sku=${x.sku} swap=${x.from_code}→${x.to_code} at=${new Date(x.swapped_at).toISOString()} by=${x.swapped_by} | put into ${x.from_code} at=${new Date(x.put_in_at).toISOString()} by=${x.put_in_by} (${x.put_in_source}) | now in: ${x.now_bin}`);
     return `${r.rows.length} of ${total.n}`;
   });
+  try { const { plan, unclear } = await repairPlan(); const c = {}; for (const x of plan) c[x.why.replace(/swap .*/, "swap took new-bin items")] = (c[x.why.replace(/swap .*/, "swap took new-bin items")] || 0) + 1;
+    console.log(`🩺 repair dry run: ${plan.length} to fix ${JSON.stringify(c)} · ${unclear.length} unclear (left alone)`);
+    for (const x of plan.slice(0, 40)) console.log(`🩺 FIX ${x.sku}: now "${x.now}" → should be "${x.intended}" (${x.why})`);
+    for (const x of unclear.slice(0, 20)) console.log(`🩺 UNCLEAR ${x.sku}: now "${x.now}" · last app move ${x.last}`);
+  } catch (e) { console.error("🩺 repair dry run failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
@@ -807,7 +830,11 @@ async function readThroughBin(sku, title) {
 // Bulk import every product's warehouseLocation from ShipStation into the app DB.
 async function syncFromShipStation() {
   if (!ssConfigured()) return { error: "ShipStation not configured" };
-  let page = 1, pages = 1, scanned = 0, imported = 0, updated = 0, withLoc = 0;
+  let page = 1, pages = 1, scanned = 0, imported = 0, updated = 0, withLoc = 0, kept = 0;
+  // Never overwrite what Stockroom changed and ShipStation hasn't caught up on yet: SKUs with an update waiting,
+  // or moved in Stockroom in the last 6 hours (ShipStation can lag behind a big run of moves).
+  const hold = new Set((await db(`SELECT sku FROM ss_queue UNION
+      SELECT sku FROM item_location WHERE updated_at > now() - interval '6 hours' AND coalesce(updated_by,'') NOT IN ('shipstation-import','shipstation-read')`)).rows.map((x) => x.sku));
   do {
     const j = await ssReq("GET", `/products?page=${page}&pageSize=500`);
     pages = j.pages || 1;
@@ -819,6 +846,7 @@ async function syncFromShipStation() {
       withLoc++;
       const cur = await getItemLocation(sku);
       if (cur && String(cur.bin || "") === loc) continue; // unchanged — idempotent re-sync
+      if (hold.has(sku)) { kept++; continue; }            // Stockroom's newer location wins until ShipStation has it
       await db(
         `INSERT INTO item_location (sku,bin,title,updated_at,updated_by) VALUES ($1,$2,$3,now(),'shipstation-import')
          ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE(item_location.title,$3), updated_at=now(), updated_by='shipstation-import'`,
@@ -831,7 +859,7 @@ async function syncFromShipStation() {
     page++;
     if (page <= pages) await new Promise((r) => setTimeout(r, 250)); // stay under ShipStation's 40 req/min
   } while (page <= pages);
-  return { ok: true, scanned, with_location: withLoc, imported, updated };
+  return { ok: true, scanned, with_location: withLoc, imported, updated, kept_stockroom: kept };
 }
 
 /* --------------------------------------- Orders → digital pick list --------------------------------------- */
@@ -1584,7 +1612,7 @@ async function doSwap({ from, to, removeFrom, by, skus }) {
 }
 app.post("/api/bins/swap", async (req, res) => {
   if (!guard(req, res)) return;
-  try { const { from, to, removeFrom, skus } = req.body || {}; res.json({ ...(await doSwap({ from, to, removeFrom, skus, by: actorOf(req) })), shipstation_pending: SSQ.size }); }
+  try { const { from, to, removeFrom, skus } = req.body || {}; res.json({ ...(await doSwap({ from, to, removeFrom, skus, by: actorOf(req) })), shipstation_pending: await ssqCount() }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 // Up to 12 swaps in one go (E-17 → R-35, E-18 → R-36 …). Checked first so a bin can't be both emptied and filled.
@@ -1610,7 +1638,7 @@ app.post("/api/bins/swap-many", async (req, res) => {
       try { results.push(await doSwap({ from: p.from, to: p.to, removeFrom: !!req.body.removeFrom, by })); }
       catch (e) { results.push({ ok: false, from: String(p.from).toUpperCase(), to: p.to ? String(p.to).toUpperCase() : null, error: e.message, moved: 0, failed: [] }); }
     }
-    res.json({ ok: true, results, moved: results.reduce((n, r) => n + (r.moved || 0), 0), shipstation_pending: SSQ.size });
+    res.json({ ok: true, results, moved: results.reduce((n, r) => n + (r.moved || 0), 0), shipstation_pending: await ssqCount() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 async function archiveBin(key, code, by, cleared) {
@@ -1633,7 +1661,7 @@ app.post("/api/bins/archive", async (req, res) => {
       }
     }
     await archiveBin(plan.from_key, plan.from, by, cleared);
-    res.json({ ok: true, bin: plan.from, cleared, failed, shipstation_pending: SSQ.size });
+    res.json({ ok: true, bin: plan.from, cleared, failed, shipstation_pending: await ssqCount() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/bins/unarchive", async (req, res) => {
@@ -1655,6 +1683,64 @@ app.get("/api/bins/archived", async (req, res) => {
     res.json({ bins: r.rows, total: n });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+/* ---- Repair for 2026-10-30: moves undone by the ShipStation import after restarts, and swaps that took a new bin's items ---- */
+const REPAIR_SINCE = "2026-10-30T05:00:00Z";
+async function repairPlan() {
+  const rows = (await db(`SELECT h.id, h.sku, h.ts, h.source, h.from_bin, h.to_bin, h.note, h.user_name FROM location_history h
+                           WHERE h.ts >= $1 AND h.sku IN (SELECT DISTINCT sku FROM location_history WHERE ts >= $1 AND source <> 'import')
+                           ORDER BY h.sku, h.ts, h.id`, [REPAIR_SINCE])).rows;
+  const bySku = {}; for (const r of rows) (bySku[r.sku] = bySku[r.sku] || []).push(r);
+  // bin-key sets so "F2" and "F-2" compare equal
+  const strs = new Set(); for (const r of rows) { strs.add(r.from_bin || ""); strs.add(r.to_bin || ""); }
+  const cur = Object.fromEntries((await db(`SELECT sku, coalesce(bin,'') AS bin FROM item_location WHERE sku = ANY($1)`, [Object.keys(bySku)])).rows.map((x) => [x.sku, x.bin]));
+  for (const b of Object.values(cur)) strs.add(b);
+  const keyRows = (await db(`SELECT s, coalesce((SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT DISTINCT bin_key(x) k FROM unnest(regexp_split_to_array(s, '[,;/|]')) x WHERE trim(x) <> '') q), '') AS keys FROM unnest($1::text[]) s`, [[...strs]])).rows;
+  const K = Object.fromEntries(keyRows.map((x) => [x.s, x.keys]));
+  const keyOf = (s) => K[s || ""] ?? "";
+  const swapFrom = (note) => { const m = String(note || "").match(/^Bin swap (.+?) → (.+)$/); return m ? m[1].trim() : null; };
+  const binKeyRows = (await db(`SELECT c, bin_key(c) k FROM unnest($1::text[]) c`, [[...new Set(rows.map((r) => swapFrom(r.note)).filter(Boolean))]])).rows;
+  const BK = Object.fromEntries(binKeyRows.map((x) => [x.c, x.k]));
+  const plan = [], unclear = [];
+  for (const [sku, hs] of Object.entries(bySku)) {
+    const appRows = hs.filter((h) => h.source !== "import");
+    const last = appRows[appRows.length - 1]; if (!last) continue;
+    let intended = last.to_bin || "", why = "your last move";
+    const sf = last.source === "swap" ? swapFrom(last.note) : null;
+    if (sf) {
+      const fk = BK[sf];
+      // was this item put into the swap's FROM bin earlier today? then it belonged to the new bin → put it back there
+      const putIn = hs.find((h) => h.ts < last.ts && h.id !== last.id && keyOf(h.to_bin).split(",").includes(fk) && !keyOf(h.from_bin).split(",").includes(fk));
+      if (putIn) { intended = last.from_bin || ""; why = `swap ${sf} took it from the new ${sf}`; }
+    }
+    const now = cur[sku] ?? "";
+    if (keyOf(now) === keyOf(intended)) continue;
+    const after = hs.filter((h) => h.ts > last.ts);
+    const undoneByImport = after.length && after.every((h) => h.source === "import");
+    if (why.startsWith("swap") || undoneByImport) plan.push({ sku, now, intended, why: undoneByImport && !why.startsWith("swap") ? "undone by ShipStation import" : why, by: last.user_name });
+    else unclear.push({ sku, now, intended, last: `${last.source} ${last.from_bin || "—"} → ${last.to_bin || "—"}` });
+  }
+  return { plan, unclear };
+}
+app.all("/api/admin/repair-2026-10-30", async (req, res) => {
+  const w = adminGuard(req, res); if (!w) return;
+  try {
+    const { plan, unclear } = await repairPlan();
+    const apply = req.method === "POST" && req.body && req.body.apply === true;
+    let fixed = 0;
+    if (apply) {
+      for (const x of plan) {
+        await db(`UPDATE item_location SET bin=$2, updated_at=now(), updated_by=$3 WHERE sku=$1`, [x.sku, x.intended || null, w.name]);
+        await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source,note) VALUES ($1,$2,$3,$4,'repair',$5)`, [x.sku, x.now || null, x.intended || null, w.name, `Repair 2026-10-30: ${x.why}`]);
+        if (x.intended) { await registerBinTokens(x.intended); await unarchiveTokens(x.intended); }
+        await ssQueuePush(x.sku, x.intended || "");
+        fixed++;
+      }
+      await db(`INSERT INTO sr_fixes (name,detail) VALUES ('repair-2026-10-30-applied',$1) ON CONFLICT (name) DO UPDATE SET detail=EXCLUDED.detail, ran_at=now()`, [`${fixed} fixed by ${w.name}`]);
+    }
+    const counts = {}; for (const x of plan) counts[x.why] = (counts[x.why] || 0) + 1;
+    res.json({ ok: true, applied: apply, fixed, to_fix: plan.length, counts, plan: plan.slice(0, 500), unclear: unclear.slice(0, 200), unclear_count: unclear.length, shipstation_pending: await ssqCount() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/settings/rebin", async (req, res) => { if (!guard(req, res)) return; try { const r = await rebinSince(); res.json({ date: r ? r.date : null }); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.post("/api/settings/rebin", async (req, res) => {
   if (!guard(req, res)) return;
@@ -1665,7 +1751,7 @@ app.post("/api/settings/rebin", async (req, res) => {
     res.json({ ok: true, date: v || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get("/api/shipstation-queue", (req, res) => { if (!guard(req, res)) return; res.json({ pending: SSQ.size, running: ssqRunning, done: ssqDone, failed: ssqFailed.slice(-10) }); });
+app.get("/api/shipstation-queue", async (req, res) => { if (!guard(req, res)) return; res.json({ pending: await ssqCount(), running: ssqRunning, done: ssqDone, failed: ssqFailed.slice(-10) }); });
 // Remove a bin from EVERY item that has it (clear the whole bin).
 app.post("/api/bin-clear", async (req, res) => {
   if (!guard(req, res)) return;
@@ -2085,6 +2171,7 @@ const PORT = process.env.PORT || 8080;
       .then((r) => console.log(`📥 ShipStation sync (${tag}): ${JSON.stringify(r)}`))
       .catch((e) => console.error(`📥 sync failed (${tag}):`, e.message));
     console.log("📥 syncing bins from ShipStation on boot…");
+    ssqRun();                        // pick up any ShipStation updates still waiting from before the restart
     runSync("boot");
     setInterval(() => runSync("6h"), 6 * 60 * 60 * 1000);
     // Shipments → activity log. First run back-fills 14 days; after that every 10 min re-reads the last
