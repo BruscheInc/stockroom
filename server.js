@@ -748,6 +748,31 @@ async function oneTimeFixes() {
   await db(`CREATE TABLE IF NOT EXISTS sr_fixes (name TEXT PRIMARY KEY, ran_at TIMESTAMPTZ DEFAULT now(), detail TEXT)`);
   const once = async (name, fn) => { if ((await db(`SELECT 1 FROM sr_fixes WHERE name=$1`, [name])).rows.length) return; const d = await fn(); await db(`INSERT INTO sr_fixes (name,detail) VALUES ($1,$2)`, [name, d || null]); console.log(`🔧 ${name}: ${d}`); };
   // 2026-10-30: F-2 was archived when the old F-2 was swapped into F-26, but the number is reused for a new bin.
+  // 2026-10-30 (read-only): which swaps done before the old/new-bin rule moved a NEW bin's items?
+  await once("check-swaps-moved-new-bin-items-2026-10-30", async () => {
+    const r = await db(`
+      WITH sw AS (
+        SELECT h.id, h.sku, h.ts, h.user_name, h.from_bin, h.to_bin, h.note,
+               trim(split_part(substring(h.note from 'Bin swap (.*)'), '→', 1)) AS from_code,
+               trim(split_part(substring(h.note from 'Bin swap (.*)'), '→', 2)) AS to_code
+          FROM location_history h
+         WHERE h.source = 'swap' AND h.ts >= '2026-10-30T05:00:00Z' AND h.note LIKE 'Bin swap %')
+      SELECT sw.sku, sw.from_code, sw.to_code, sw.ts AS swapped_at, sw.user_name AS swapped_by,
+             p.ts AS put_in_at, coalesce(p.user_name,'') AS put_in_by, p.source AS put_in_source, il.bin AS now_bin
+        FROM sw
+        JOIN LATERAL (
+          SELECT p.ts, p.user_name, p.source FROM location_history p
+           WHERE p.sku = sw.sku AND p.ts >= '2026-10-30T05:00:00Z' AND p.ts < sw.ts AND p.id <> sw.id
+             AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(p.to_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = bin_key(sw.from_code))
+             AND NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(p.from_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = bin_key(sw.from_code))
+           ORDER BY p.ts DESC LIMIT 1) p ON true
+        LEFT JOIN item_location il ON il.sku = sw.sku
+       ORDER BY sw.ts`);
+    const total = (await db(`SELECT count(*)::int n, count(DISTINCT note)::int b FROM location_history WHERE source='swap' AND ts >= '2026-10-30T05:00:00Z'`)).rows[0];
+    console.log(`🔎 swaps today: ${total.n} item moves across ${total.b} bin swaps · ${r.rows.length} of them moved an item that had been put into the old bin number today`);
+    for (const x of r.rows) console.log(`🔎 MOVED-NEW sku=${x.sku} swap=${x.from_code}→${x.to_code} at=${new Date(x.swapped_at).toISOString()} by=${x.swapped_by} | put into ${x.from_code} at=${new Date(x.put_in_at).toISOString()} by=${x.put_in_by} (${x.put_in_source}) | now in: ${x.now_bin}`);
+    return `${r.rows.length} of ${total.n}`;
+  });
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
