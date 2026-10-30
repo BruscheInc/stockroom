@@ -2132,10 +2132,10 @@ async function swRepairLoad(){
   </div>`;
 }
 async function swRepairApply(n){
-  if(!confirm(`Put ${n} items back where they should be? ShipStation gets updated in the background.`)) return;
+  if(!confirm(`Put ${n} items back where they should be?\n\nShipStation is then brought up to date for everything moved today — it runs in the background and takes a while.`)) return;
   try{ const r=await api("/api/admin/repair-2026-10-30",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apply:true})});
     if(r.error){ toast(r.error,true); return; }
-    toast(`Fixed ${r.fixed} items`); $("swRepair").innerHTML=`<div class="card"><b>Fixed ${r.fixed} items.</b> <span class="muted">ShipStation is being updated in the background (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min).</span></div>`;
+    toast(`Fixed ${r.fixed} items`); $("swRepair").innerHTML=`<div class="card"><b>Fixed ${r.fixed} items.</b> <span class="muted">ShipStation is being brought up to date in the background for everything moved today (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min). It keeps going even if the app restarts.</span></div>`;
     if(BR) BR._at=0; SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); });
   }catch(e){ toast("Fix failed",true); }
 }

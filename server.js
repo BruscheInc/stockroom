@@ -1735,6 +1735,10 @@ app.all("/api/admin/repair-2026-10-30", async (req, res) => {
         await ssQueuePush(x.sku, x.intended || "");
         fixed++;
       }
+      // ShipStation may also be behind on items Stockroom has right (updates lost on restart): re-send everything moved today.
+      const today = (await db(`SELECT il.sku, coalesce(il.bin,'') AS bin FROM item_location il
+                                WHERE il.sku IN (SELECT DISTINCT sku FROM location_history WHERE ts >= $1 AND source <> 'import')`, [REPAIR_SINCE])).rows;
+      for (const t of today) await ssQueuePush(t.sku, t.bin);
       await db(`INSERT INTO sr_fixes (name,detail) VALUES ('repair-2026-10-30-applied',$1) ON CONFLICT (name) DO UPDATE SET detail=EXCLUDED.detail, ran_at=now()`, [`${fixed} fixed by ${w.name}`]);
     }
     const counts = {}; for (const x of plan) counts[x.why] = (counts[x.why] || 0) + 1;
