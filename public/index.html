@@ -316,11 +316,32 @@
     .toast{bottom:28px}
     .oskfab{bottom:24px}
   }
-  .swgrid{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:end}
-  .swgrid>div{min-width:0}
-  .swgrid input{width:100%;min-width:0;min-height:46px;font-size:18px;font-weight:700;text-transform:uppercase;padding:0 12px}
-  .swarrow{padding-bottom:12px;color:var(--faint)}.swarrow .ti{font-size:22px}
-  @media (max-width:520px){ .swgrid{grid-template-columns:1fr} .swarrow{display:none} }
+  .swrow{display:grid;grid-template-columns:22px minmax(0,1fr) 18px minmax(0,1fr) 34px;gap:6px 8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+  .swrow:last-child{border-bottom:0}
+  .swrow .swn{font-weight:800;color:var(--faint);text-align:center;font-size:13px}
+  .swrow .swin{display:flex;gap:6px;min-width:0}
+  .swrow .swin input{flex:1;min-width:0;width:100%;min-height:44px;font-size:17px;font-weight:700;text-transform:uppercase;padding:0 10px}
+  .swrow .swin .btn{width:40px;min-height:44px;padding:0;flex:none}
+  .swrow .arr{color:var(--faint);text-align:center}
+  .swrow .rm{width:34px;height:34px;border:0;background:none;color:var(--faint);border-radius:8px;display:grid;place-items:center}
+  .swrow .rm:hover{background:#F3F4F6;color:var(--bad)}
+  .swrow .swsum{grid-column:2/-1;font-size:13px;color:var(--muted);min-height:18px}
+  .swrow .swsum.bad{color:var(--bad)} .swrow .swsum.warn{color:var(--warn)} .swrow .swsum.ok b{color:var(--ink)}
+  .swrow .swsum a{color:var(--accent2);cursor:pointer;margin-left:4px}
+  .swrow .swdet{grid-column:2/-1}
+  .swrow .swtog{cursor:pointer;-webkit-user-select:none;user-select:none}
+  .swcar{font-size:13px;transition:transform .15s;vertical-align:-1px}.swcar.open{transform:rotate(90deg)}
+  @media (max-width:520px){
+    .swrow{grid-template-columns:22px minmax(0,1fr) 32px;gap:6px}
+    .swrow .swn{grid-column:1;grid-row:1}
+    .swrow .swin:not(.to){grid-column:2;grid-row:1}
+    .swrow .rm{grid-column:3;grid-row:1}
+    .swrow .arr{grid-column:1;grid-row:2;display:block;transform:rotate(90deg)}
+    .swrow .swin.to{grid-column:2;grid-row:2}
+    .swrow .swsum{grid-column:2/-1;grid-row:3}
+    .swrow .swdet{grid-column:2/-1;grid-row:4}
+    .swrow .swin .btn{width:40px}
+  }
   .swhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:15px}
   .swhead .pill{font-size:15px;padding:5px 12px}
   .lblform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
@@ -553,19 +574,30 @@
   <section id="tab-binswap" class="hidden">
     <div class="card">
       <h1 class="ph">Bin swap</h1>
-      <div class="phsub">Move everything in one bin to another bin in one go — then drop the old bin number.</div>
-      <div class="swgrid">
-        <div><label class="lab" for="swFrom">Move everything from</label>
-          <div class="moverow" style="margin:0"><input id="swFrom" data-osk="1" inputmode="none" placeholder="E-17" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swQueue()" onkeydown="if(event.key==='Enter')$('swTo').focus()">
-          <button class="btn sec" onclick="swScan('swFrom')" title="Scan the bin label"><i class="ti ti-camera"></i></button></div></div>
-        <div class="swarrow"><i class="ti ti-chevron-right"></i></div>
-        <div><label class="lab" for="swTo">Into</label>
-          <div class="moverow" style="margin:0"><input id="swTo" data-osk="1" inputmode="none" placeholder="R-35" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swQueue()" onkeydown="if(event.key==='Enter')swLoad()">
-          <button class="btn sec" onclick="swScan('swTo')" title="Scan the bin label"><i class="ti ti-camera"></i></button></div></div>
+      <div class="phsub">Move everything from up to 12 bins into new bins in one go. Scan or type each pair.</div>
+      <div id="swRows"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn sec" id="swAdd" onclick="swAddRow(true)"><i class="ti ti-plus"></i> Add a bin</button>
+        <span class="muted" id="swCount" style="font-size:13px"></span>
+        <span style="flex:1"></span>
+        <a class="muted" style="font-size:13px;cursor:pointer" onclick="swClearAll()">Clear all</a>
       </div>
       <div id="sreader" style="width:100%;border-radius:14px;overflow:hidden;margin-top:10px;display:none;background:#000"></div>
     </div>
+    <div class="card" id="swGoCard">
+      <div id="swTotal" class="muted" style="margin-bottom:10px"></div>
+      <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> <span>Archive each old bin once it's empty — hides it from Bins and the fill report (you can restore it)</span></label>
+      <div class="note" style="text-align:left;margin:8px 0 12px">Items keep any other bins they're in. Every move is in the item's location history and is sent to ShipStation.</div>
+      <button class="btn wide" id="swGo" disabled onclick="swGo()"><i class="ti ti-arrows-sort"></i> Move</button>
+    </div>
     <div id="swPlan"></div>
+    <div class="sectlabel">Archive a bin</div>
+    <div class="card">
+      <div class="moverow" style="margin:0"><input id="swArchIn" data-osk="1" inputmode="none" placeholder="Bin to archive (e.g. E-17)" autocomplete="off" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase" oninput="swArchCheck()" onkeydown="if(event.key==='Enter')swArchive()">
+        <button class="btn sec" onclick="swScanArch()" title="Scan the bin label"><i class="ti ti-camera"></i></button>
+        <button class="btn sec" id="swArchBtn" onclick="swArchive()"><i class="ti ti-package"></i> Archive</button></div>
+      <div id="swArchInfo" class="note" style="text-align:left;margin:8px 0 0">Hides a bin from Bins and the fill report. Scanning its label still works.</div>
+    </div>
     <div class="sectlabel">Archived bins</div>
     <div class="card"><div id="swArch"><div class="muted">Loading…</div></div></div>
   </section>
@@ -2073,84 +2105,155 @@ async function sendOos(order){
 }
 
 /* ---------- print bin label (QR encodes BIN-<code>) ---------- */
-/* ---------- bin swap ---------- */
-let SW_T=null, SW_PLAN=null;
-function swInit(){ swLoad(); swArchList(); if(!IS_TOUCH) setTimeout(()=>{ const f=$("swFrom"); if(f&&!f.value) f.focus(); },60); }
-function swFromBin(bin){ $("swFrom").value=bin; $("swTo").value=""; goTab("binswap"); setTimeout(()=>$("swTo").focus(),80); }
-function swQueue(){ clearTimeout(SW_T); SW_T=setTimeout(swLoad,350); }
-function swScan(id){ startCamera((code)=>{ $(id).value=String(code).replace(/^BIN[-:]/i,""); swLoad(); if(id==="swFrom"&&!$("swTo").value) $("swTo").focus(); },{reader:"sreader",btn:"swNoBtn",note:"swPlan"}); }
-async function swLoad(){
-  const from=$("swFrom").value.trim(), to=$("swTo").value.trim(), el=$("swPlan");
-  if(!from){ SW_PLAN=null; el.innerHTML=""; return; }
-  el.innerHTML='<div class="card center muted">Checking bins…</div>';
-  let d; try{ d=await api(`/api/bins/swap?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`); }catch(e){ el.innerHTML='<div class="card center muted">Couldn\'t load — try again.</div>'; return; }
-  if(from!==$("swFrom").value.trim()||to!==$("swTo").value.trim()) return;      // typing moved on
-  if(d.error){ el.innerHTML=`<div class="card center muted">${esc(d.error)}</div>`; return; }
-  SW_PLAN=d;
-  const n=d.items.length, units=d.items.reduce((s,i)=>s+(Number(i.qty)||0),0);
-  const rows=d.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer"><td><div class="mono">${esc(i.sku)}</div><div class="muted" style="font-size:12px">${esc(i.title||"")}${i.variant&&i.variant!=="Default Title"?" · "+esc(i.variant):""}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · <b>already in ${esc(d.to)}</b>`:""}</div></td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`).join("");
-  const head=`<div class="swhead"><span class="pill bin">${esc(d.from)}</span><i class="ti ti-chevron-right muted"></i>${d.to?`<span class="pill bin">${esc(d.to)}</span>`:'<span class="muted">pick the new bin</span>'}</div>`;
-  if(d.same){ el.innerHTML=`<div class="card">${head}<p style="color:var(--bad);margin:10px 0 0">That's the same bin.</p></div>`+swArchCard(d); return; }
-  if(!n){
-    el.innerHTML=`<div class="card">${head}<p class="muted" style="margin:10px 0 0"><b>${esc(d.from)}</b> is empty — nothing to move.</p></div>`+swArchCard(d);
-    return;
-  }
-  el.innerHTML=`<div class="card">${head}
-      <div class="muted" style="margin:8px 0 4px">${n} item${n===1?"":"s"} · ${units} unit${units===1?"":"s"} on hand${d.to?` · ${esc(d.to)} has ${d.to_count} item${d.to_count===1?"":"s"} now`:""}</div>
-      <table style="margin-top:6px"><thead><tr><th>Item</th><th class="n">On hand</th></tr></thead><tbody>${rows}</tbody></table>
-    </div>
-    <div class="card">
-      <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> <span>Archive <b>${esc(d.from)}</b> when it's empty — hides it from Bins and the fill report (you can restore it)</span></label>
-      <div class="note" style="text-align:left;margin:8px 0 12px">Each item keeps any other bins it's in. Every move is in the item's location history and is sent to ShipStation.</div>
-      <button class="btn wide" id="swGo" ${d.to?"":"disabled"} onclick="swGo()"><i class="ti ti-arrows-sort"></i> ${d.to?`Move ${n} item${n===1?"":"s"} to ${esc(d.to)}`:"Pick the new bin"}</button>
-    </div>`+swArchCard(d);
+/* ---------- bin swap (up to 12 at a time) ---------- */
+const SW_MAX=12; let SW_ROWS=[], SW_UID=0, SW_STARTED=false;
+function swRow(id){ return SW_ROWS.find(r=>r.id===id); }
+function swInit(){ if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
+// "E-17" → "E-18", "534-L" → "535-L": the next bin in the run, written the same way.
+function swNext(code){ const m=String(code||"").match(/^(.*?)(\d+)([^\d]*)$/); return m? m[1]+String(Number(m[2])+1)+m[3] : ""; }
+function swAddRow(focus,from,to){
+  if(SW_ROWS.length>=SW_MAX){ toast(`Up to ${SW_MAX} bins at a time`,true); return; }
+  const last=SW_ROWS[SW_ROWS.length-1];
+  const f = from!=null?from : (last&&last.from? swNext(last.from):""), t = to!=null?to : (last&&last.to? swNext(last.to):"");
+  const r={id:++SW_UID,from:f,to:t,plan:null,open:false,seq:0}; SW_ROWS.push(r); swRender();
+  if(f) swFetch(r);
+  if(focus&&!IS_TOUCH) setTimeout(()=>{ const e=$("swF"+r.id); if(e){ e.focus(); e.select(); } },40);
 }
+function swRemoveRow(id){ SW_ROWS=SW_ROWS.filter(r=>r.id!==id); if(!SW_ROWS.length) swAddRow(false); else swRender(); swCheckAll(); }
+function swClearAll(){ SW_ROWS=[]; $("swPlan").innerHTML=""; swAddRow(true); swCheckAll(); }
+function swRender(){
+  $("swRows").innerHTML=SW_ROWS.map((r,i)=>`<div class="swrow" id="swR${r.id}">
+      <div class="swn">${i+1}</div>
+      <div class="swin"><input id="swF${r.id}" data-osk="1" inputmode="none" value="${esc(r.from)}" placeholder="From (E-17)" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swEdit(${r.id},'from',this.value)" onkeydown="if(event.key==='Enter')$('swT${r.id}').focus()">
+        <button class="btn sec" onclick="swScanInto(${r.id},'from')" title="Scan"><i class="ti ti-camera"></i></button></div>
+      <div class="arr"><i class="ti ti-chevron-right"></i></div>
+      <div class="swin to"><input id="swT${r.id}" data-osk="1" inputmode="none" value="${esc(r.to)}" placeholder="Into (R-35)" autocomplete="off" autocapitalize="characters" spellcheck="false" oninput="swEdit(${r.id},'to',this.value)" onkeydown="if(event.key==='Enter')swEnterNext(${r.id})">
+        <button class="btn sec" onclick="swScanInto(${r.id},'to')" title="Scan"><i class="ti ti-camera"></i></button></div>
+      <button class="rm" onclick="swRemoveRow(${r.id})" title="Remove this row" aria-label="Remove"><i class="ti ti-x"></i></button>
+      <div class="swsum" id="swS${r.id}"></div>
+      <div class="swdet" id="swD${r.id}"></div>
+    </div>`).join("");
+  $("swAdd").disabled=SW_ROWS.length>=SW_MAX;
+  $("swCount").textContent=`${SW_ROWS.length} of ${SW_MAX}`;
+  SW_ROWS.forEach(swPaint);
+}
+function swEnterNext(id){ const i=SW_ROWS.findIndex(r=>r.id===id); const n=SW_ROWS[i+1]; if(n){ $("swF"+n.id).focus(); } else if(SW_ROWS.length<SW_MAX) swAddRow(true); }
+let SW_TIMERS={};
+function swEdit(id,k,v){ const r=swRow(id); if(!r) return; r[k]=v.trim(); clearTimeout(SW_TIMERS[id]); SW_TIMERS[id]=setTimeout(()=>swFetch(r),350); }
+function swScanInto(id,k){ startCamera((code)=>{ const r=swRow(id); if(!r) return; const v=String(code).replace(/^BIN[-:]/i,""); r[k]=v; const e=$((k==="from"?"swF":"swT")+id); if(e) e.value=v; swFetch(r); if(k==="from") $("swT"+id).focus(); },{reader:"sreader",btn:"swNoBtn",note:"swCount"}); }
+async function swFetch(r){
+  const my=++r.seq;
+  if(!r.from){ r.plan=null; swPaint(r); swCheckAll(); return; }
+  r.loading=true; swPaint(r);
+  let d; try{ d=await api(`/api/bins/swap?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to||"")}`); }catch(e){ d={error:"Couldn't check this bin"}; }
+  if(my!==r.seq) return;
+  r.loading=false; r.plan=d; swPaint(r); swCheckAll();
+}
+// Problems across rows: the same bin twice, or a bin both emptied and filled.
+function swConflicts(){
+  const out={}, froms={}, tos={};
+  for(const r of SW_ROWS){ const p=r.plan; if(!p||p.error) continue; if(p.from_key){ (froms[p.from_key]=froms[p.from_key]||[]).push(r.id); } if(p.to_key) (tos[p.to_key]=tos[p.to_key]||[]).push(r.id); }
+  for(const k in froms){ if(froms[k].length>1) froms[k].slice(1).forEach(id=>out[id]="This bin is already in another row."); if(tos[k]) froms[k].forEach(id=>out[id]=out[id]||"This bin is also a target in another row — do those in a second run."); }
+  return out;
+}
+function swPaint(r){
+  const s=$("swS"+r.id), det=$("swD"+r.id); if(!s) return;
+  const p=r.plan, c=swConflicts()[r.id];
+  s.className="swsum"; s.onclick=null; det.innerHTML="";
+  if(!r.from){ s.textContent=""; return; }
+  if(r.loading&&!p){ s.textContent="Checking…"; return; }
+  if(!p) return;
+  if(p.error){ s.className="swsum bad"; s.textContent=p.error; return; }
+  if(p.same){ s.className="swsum bad"; s.textContent="That's the same bin."; return; }
+  if(c){ s.className="swsum bad"; s.textContent=c; return; }
+  const n=p.items.length, units=p.items.reduce((a,i)=>a+(Number(i.qty)||0),0);
+  if(!n){ s.className="swsum warn"; s.innerHTML=`<b>${esc(p.from)}</b> is empty${p.from_archived?" and already archived":" — nothing to move"+( $("swRemove")&&$("swRemove").checked?", it'll just be archived":"")}.`; return; }
+  s.className="swsum ok swtog";
+  s.onclick=()=>swToggle(r.id);
+  s.innerHTML=`<i class="ti ti-chevron-right swcar${r.open?" open":""}"></i> <b>${esc(p.from)}</b>: ${n} item${n===1?"":"s"} · ${units} unit${units===1?"":"s"}${p.to?` → <b>${esc(p.to)}</b>${p.to_count?` (has ${p.to_count})`:" (empty)"}`:' — <span style="color:var(--warn)">enter where it goes</span>'}`;
+  if(r.open) det.innerHTML=`<table style="font-size:13px;margin-top:4px"><tbody>${p.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · already in ${esc(p.to)}`:""}</span></td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`).join("")}</tbody></table>`;
+}
+function swToggle(id){ const r=swRow(id); if(!r) return; r.open=!r.open; swPaint(r); }
+// Rows that are ready to go, plus the summary and the Move button.
+function swReady(){
+  const c=swConflicts(), archive=$("swRemove").checked;
+  return SW_ROWS.filter(r=>{ const p=r.plan; if(!r.from||!p||p.error||p.same||c[r.id]||r.loading) return false;
+    return p.items.length ? !!p.to : (archive && !p.from_archived); });
+}
+function swCheckAll(){
+  SW_ROWS.forEach(swPaint);
+  const ready=swReady(), filled=SW_ROWS.filter(r=>r.from), items=ready.reduce((a,r)=>a+r.plan.items.length,0), units=ready.reduce((a,r)=>a+r.plan.items.reduce((x,i)=>x+(Number(i.qty)||0),0),0);
+  const bad=filled.length-ready.length, btn=$("swGo");
+  $("swTotal").innerHTML = filled.length ? `<b style="color:var(--ink)">${ready.length} bin${ready.length===1?"":"s"} ready</b> · ${items} item${items===1?"":"s"} · ${units} unit${units===1?"":"s"}${bad?` · <span style="color:var(--warn)">${bad} row${bad===1?"":"s"} need${bad===1?"s":""} attention</span>`:""}` : "Add the bins you're moving above.";
+  btn.disabled=!ready.length;
+  btn.innerHTML=`<i class="ti ti-arrows-sort"></i> ${ready.length?`Move ${items} item${items===1?"":"s"} from ${ready.length} bin${ready.length===1?"":"s"}`:"Move"}`;
+}
+document.addEventListener("change",(e)=>{ if(e.target&&e.target.id==="swRemove") swCheckAll(); });
 async function swGo(){
-  const d=SW_PLAN; if(!d||!d.to) return;
-  if(!confirm(`Move all ${d.items.length} item${d.items.length===1?"":"s"} from ${d.from} to ${d.to}?`)) return;
-  const b=$("swGo"); b.disabled=true; b.textContent="Moving…";
+  const ready=swReady(); if(!ready.length) return;
+  const items=ready.reduce((a,r)=>a+r.plan.items.length,0);
+  if(!confirm(`Move ${items} item${items===1?"":"s"} from ${ready.length} bin${ready.length===1?"":"s"}?\n\n`+ready.map(r=>`${r.plan.from} → ${r.plan.to||"(archive)"}`).join("\n"))) return;
+  const b=$("swGo"); b.disabled=true; b.textContent=`Moving ${ready.length} bin${ready.length===1?"":"s"}…`;
   try{
-    const r=await api("/api/bins/swap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:d.from,to:d.to,removeFrom:$("swRemove").checked})});
-    if(r.error){ toast(r.error,true); b.disabled=false; b.textContent="Try again"; return; }
+    const r=await api("/api/bins/swap-many",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairs:ready.map(x=>({from:x.plan.from,to:x.plan.to})),removeFrom:$("swRemove").checked})});
+    if(r.error){ toast(r.error,true); swCheckAll(); return; }
+    const okRows=r.results.filter(x=>x.ok), badRows=r.results.filter(x=>!x.ok||x.failed.length);
     $("swPlan").innerHTML=`<div class="card">
-      <div class="swhead"><span class="pill bin">${esc(r.from)}</span><i class="ti ti-chevron-right muted"></i><span class="pill bin">${esc(r.to)}</span></div>
-      <p style="margin:12px 0 4px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved to ${esc(r.to)}.</b>${r.removed?` ${esc(r.from)} is archived.`:""}</p>
-      ${r.failed.length?`<p style="color:var(--bad);margin:4px 0">${r.failed.length} didn't move: ${esc(r.failed.map(f=>f.sku).join(", "))}</p>`:""}
-      <p class="muted" style="margin:4px 0 14px">ShipStation is being updated in the background${r.shipstation_pending?` (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min)`:""}.</p>
-      <div class="moverow"><button class="btn sec" onclick="lookup('BIN-${esc(r.to)}')"><i class="ti ti-building-warehouse"></i> Open ${esc(r.to)}</button><button class="btn" onclick="$('swFrom').value='';$('swTo').value='';swLoad();$('swFrom').focus()">New swap</button></div></div>`;
-    toast(`Moved ${r.moved} to ${r.to}`); swArchList(); if(BR) BR._at=0;
-  }catch(e){ toast("Swap failed",true); b.disabled=false; b.textContent="Try again"; }
+      <p style="margin:0 0 8px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved from ${okRows.length} bin${okRows.length===1?"":"s"}.</b></p>
+      ${r.results.map(x=>`<div class="row" style="padding:7px 0"><span><span class="mono" style="font-weight:700">${esc(x.from)}</span> <i class="ti ti-chevron-right muted" style="font-size:12px"></i> <span class="mono" style="font-weight:700">${esc(x.to||"—")}</span></span>
+        <span style="text-align:right;font-size:13px">${x.ok?`${x.moved} moved${x.removed?' · <span class="muted">archived</span>':""}${x.failed.length?` · <span style="color:var(--bad)">${x.failed.length} failed</span>`:""}`:`<span style="color:var(--bad)">${esc(x.error)}</span>`}</span></div>`).join("")}
+      <p class="muted" style="margin:10px 0 12px;font-size:13px">ShipStation is being updated in the background${r.shipstation_pending?` (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min)`:""}.</p>
+      ${badRows.length?'<div class="note" style="text-align:left;color:var(--warn);margin:0 0 10px">Rows that didn\'t finish are still listed above — check them and press Move again.</div>':""}
+    </div>`;
+    toast(`Moved ${r.moved} item${r.moved===1?"":"s"}`);
+    // Keep only the rows that didn't finish; start a fresh row otherwise.
+    const done=new Set(okRows.filter(x=>!x.failed.length).map(x=>x.from));
+    SW_ROWS=SW_ROWS.filter(x=>!(x.plan&&done.has(x.plan.from)));
+    if(!SW_ROWS.length) swAddRow(false); else { swRender(); SW_ROWS.forEach(swFetch); }
+    swArchList(); if(BR) BR._at=0; swCheckAll();
+    try{ $("swPlan").scrollIntoView({behavior:"smooth",block:"start"}); }catch(_){}
+  }catch(e){ toast("Swap failed",true); swCheckAll(); }
 }
-// Archive: hide a bin from the bin list and reports while rebinning. Reversible.
-function swArchCard(d){
+function swFromBin(bin){
+  goTab("binswap");
+  const empty=SW_ROWS.find(r=>!r.from);
+  if(empty){ empty.from=bin; empty.to=""; swRender(); swFetch(empty); setTimeout(()=>{ const t=$("swT"+empty.id); if(t) t.focus(); },80); }
+  else swAddRow(false,bin,"");
+}
+// ---- archive a single bin
+let SW_ARCH=null, SW_AT=null;
+function swScanArch(){ startCamera((code)=>{ $("swArchIn").value=String(code).replace(/^BIN[-:]/i,""); swArchCheck(); },{reader:"sreader",btn:"swNoBtn",note:"swArchInfo"}); }
+function swArchCheck(){ clearTimeout(SW_AT); SW_AT=setTimeout(async()=>{
+  const v=$("swArchIn").value.trim(), info=$("swArchInfo");
+  if(!v){ SW_ARCH=null; info.innerHTML="Hides a bin from Bins and the fill report. Scanning its label still works."; return; }
+  let d; try{ d=await api(`/api/bins/swap?from=${encodeURIComponent(v)}`); }catch(e){ return; }
+  if(v!==$("swArchIn").value.trim()) return;
+  SW_ARCH=d;
+  if(d.error){ info.innerHTML=`<span style="color:var(--bad)">${esc(d.error)}</span>`; return; }
+  if(d.from_archived){ info.innerHTML=`<b>${esc(d.from)}</b> is already archived. <a style="color:var(--accent2);cursor:pointer" onclick="swRestore(${esc(JSON.stringify(d.from))})">Restore it</a>`; return; }
   const n=d.items.length;
-  if(d.from_archived) return `<div class="card"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span class="role">Archived</span><span class="muted" style="flex:1;min-width:150px">${esc(d.from)} was archived by ${esc(d.from_archived.archived_by||"?")} · ${fmt(d.from_archived.archived_at)}</span>
-      <button class="btn sec sm" onclick="swRestore(${esc(JSON.stringify(d.from))})"><i class="ti ti-arrow-back-up"></i> Restore</button></div></div>`;
-  return `<div class="card">
-    <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px"><b>Archive ${esc(d.from)}</b><div class="muted" style="font-size:13.5px">Hides it from Bins and the bin fill report. Scanning its label still works, and you can restore it below.</div></div>
-      <button class="btn sec" id="swArchBtn" onclick="swArchive()"><i class="ti ti-package"></i> Archive ${esc(d.from)}</button>
-    </div>
-    ${n?`<label class="vtoggle" style="margin-top:10px;align-items:flex-start"><input type="checkbox" id="swArchClear" style="margin-top:2px"> <span>Also take ${esc(d.from)} off the ${n} item${n===1?"":"s"} still in it (they keep their other bins)</span></label>`:""}
-  </div>`;
-}
+  info.innerHTML = n ? `<b>${esc(d.from)}</b> still holds ${n} item${n===1?"":"s"}. <label class="vtoggle" style="margin-top:6px;align-items:flex-start"><input type="checkbox" id="swArchClear" style="margin-top:2px"> <span>Also take ${esc(d.from)} off ${n===1?"that item":"those items"} (they keep their other bins)</span></label>`
+                     : `<b>${esc(d.from)}</b> is empty — ready to archive.`;
+},300); }
 async function swArchive(){
-  const d=SW_PLAN; if(!d) return;
+  const d=SW_ARCH; if(!d||d.error){ $("swArchIn").focus(); return; }
+  if(d.from_archived){ toast(`${d.from} is already archived`); return; }
   const n=d.items.length, clear=!!($("swArchClear")&&$("swArchClear").checked);
-  if(n&&!clear){ toast(`${d.from} still holds ${n} item${n===1?"":"s"} — move them above, or tick "also take it off"`,true); return; }
+  if(n&&!clear){ toast(`${d.from} still holds ${n} item${n===1?"":"s"} — move them, or tick "also take it off"`,true); return; }
   if(!confirm(`Archive ${d.from}?${n?` It will be taken off ${n} item${n===1?"":"s"}.`:""}`)) return;
-  const b=$("swArchBtn"); if(b) b.disabled=true;
+  const b=$("swArchBtn"); b.disabled=true;
   try{ const r=await api("/api/bins/archive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bin:d.from,clearItems:clear})});
-    if(r.error){ toast(r.error,true); if(b) b.disabled=false; return; }
+    if(r.error){ toast(r.error,true); return; }
     toast(`${r.bin} archived${r.cleared?` · taken off ${r.cleared} item${r.cleared===1?"":"s"}`:""}`);
-    $("swFrom").value=""; $("swTo").value=""; swLoad(); swArchList(); if(BR) BR._at=0; }
-  catch(e){ toast("Couldn't archive",true); if(b) b.disabled=false; }
+    $("swArchIn").value=""; SW_ARCH=null; swArchCheck(); swArchList(); if(BR) BR._at=0; SW_ROWS.forEach(r=>{ if(r.from) swFetch(r); }); }
+  catch(e){ toast("Couldn't archive",true); } finally{ b.disabled=false; }
 }
 async function swRestore(bin){
   try{ const r=await api("/api/bins/unarchive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bin})});
     if(r.error){ toast(r.error,true); return; } toast(r.restored?`${r.bin} restored`:"It wasn't archived");
-    swArchList(); if(BR) BR._at=0; if(!$("tab-binswap").classList.contains("hidden")) swLoad(); else if(currentView&&currentView.kind==="bin") reloadBin(currentView.key); }
+    swArchList(); if(BR) BR._at=0; swArchCheck();
+    if(!$("tab-binswap").classList.contains("hidden")) SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); });
+    else if(currentView&&currentView.kind==="bin") reloadBin(currentView.key); }
   catch(e){ toast("Couldn't restore",true); }
 }
 async function swArchList(){

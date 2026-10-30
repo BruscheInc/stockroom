@@ -1495,25 +1495,53 @@ app.get("/api/bins/swap", async (req, res) => {
   try { res.json(await swapPlan(req.query.from, req.query.to)); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
+// One swap: move everything from → to; optionally archive the emptied bin.
+async function doSwap({ from, to, removeFrom, by }) {
+  const plan = await swapPlan(from, to);
+  if (!plan.to && plan.items.length) { const e = new Error("Enter the bin to move everything into."); e.status = 400; throw e; }
+  if (plan.same) { const e = new Error("That's the same bin."); e.status = 400; throw e; }
+  const note = plan.to ? `Bin swap ${plan.from} → ${plan.to}` : `Removed bin ${plan.from}`;
+  let moved = 0; const failed = [];
+  for (const it of plan.items) {
+    try { await moveItem({ sku: it.sku, toBin: it.next, user: by, source: "swap", note, batch: true }); moved++; }
+    catch (e) { failed.push({ sku: it.sku, error: e.message }); }
+  }
+  if (plan.to) { await registerBinTokens(plan.to); await unarchiveTokens(plan.to, by); }
+  let removed = false;
+  if (removeFrom && !failed.length && !(await binSkus(plan.from_key)).length) {
+    await archiveBin(plan.from_key, plan.from, by, 0); removed = true;      // archived (hidden, can be restored)
+  }
+  return { ok: true, from: plan.from, to: plan.to, moved, failed, removed };
+}
 app.post("/api/bins/swap", async (req, res) => {
   if (!guard(req, res)) return;
+  try { const { from, to, removeFrom } = req.body || {}; res.json({ ...(await doSwap({ from, to, removeFrom, by: actorOf(req) })), shipstation_pending: SSQ.size }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+// Up to 12 swaps in one go (E-17 → R-35, E-18 → R-36 …). Checked first so a bin can't be both emptied and filled.
+app.post("/api/bins/swap-many", async (req, res) => {
+  if (!guard(req, res)) return;
   try {
-    const { from, to, removeFrom } = req.body || {};
-    const plan = await swapPlan(from, to);
-    if (!plan.to && plan.items.length) return res.status(400).json({ error: "Enter the bin to move everything into." });
-    if (plan.same) return res.status(400).json({ error: "That's the same bin." });
-    const by = actorOf(req), note = plan.to ? `Bin swap ${plan.from} → ${plan.to}` : `Removed bin ${plan.from}`;
-    let moved = 0; const failed = [];
-    for (const it of plan.items) {
-      try { await moveItem({ sku: it.sku, toBin: it.next, user: by, source: "swap", note, batch: true }); moved++; }
-      catch (e) { failed.push({ sku: it.sku, error: e.message }); }
+    const pairs = ((req.body && req.body.pairs) || []).filter((p) => p && String(p.from || "").trim());
+    if (!pairs.length) return res.status(400).json({ error: "Add at least one bin." });
+    if (pairs.length > 12) return res.status(400).json({ error: "Up to 12 bins at a time." });
+    const keyed = [];
+    for (const p of pairs) {
+      const f = await houseCode(p.from), t = p.to ? await houseCode(p.to) : null;
+      if (!f) return res.status(400).json({ error: `"${p.from}" isn't a bin code.` });
+      keyed.push({ from: f, to: t });
     }
-    if (plan.to) await registerBinTokens(plan.to);
-    let removed = false;
-    if (removeFrom && !failed.length && !(await binSkus(plan.from_key)).length) {
-      await archiveBin(plan.from_key, plan.from, by, 0); removed = true;      // archived (hidden, can be restored)
+    const fromKeys = keyed.map((k) => k.from.key), toKeys = keyed.filter((k) => k.to).map((k) => k.to.key);
+    const dupe = fromKeys.find((k, i) => fromKeys.indexOf(k) !== i);
+    if (dupe) return res.status(400).json({ error: `${keyed.find((k) => k.from.key === dupe).from.code} is listed twice.` });
+    const both = toKeys.find((k) => fromKeys.includes(k));
+    if (both) return res.status(400).json({ error: `${keyed.find((k) => k.from.key === both).from.code} is being emptied and filled in the same run — do it in two runs.` });
+    const by = actorOf(req), results = [];
+    for (const p of pairs) {
+      try { results.push(await doSwap({ from: p.from, to: p.to, removeFrom: !!req.body.removeFrom, by })); }
+      catch (e) { results.push({ ok: false, from: String(p.from).toUpperCase(), to: p.to ? String(p.to).toUpperCase() : null, error: e.message, moved: 0, failed: [] }); }
     }
-    res.json({ ok: true, from: plan.from, to: plan.to, moved, failed, removed, shipstation_pending: SSQ.size });
+    res.json({ ok: true, results, moved: results.reduce((n, r) => n + (r.moved || 0), 0), shipstation_pending: SSQ.size });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 async function archiveBin(key, code, by, cleared) {
