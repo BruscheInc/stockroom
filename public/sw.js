@@ -1,7 +1,7 @@
 // Stockroom service worker — the app shell is fetched NETWORK-FIRST so a new deploy shows up on the
 // next launch (the old cache-first shell meant a deployed change never reached an installed device
 // until the cache name was bumped by hand). Cache is the offline fallback. /api/ is always live.
-const CACHE = "stockroom-v47";
+const CACHE = "stockroom-v48";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons.css", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 const isShell = (req, url) => req.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith("/index.html");
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()).catch(() => {})); });

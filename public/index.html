@@ -587,7 +587,7 @@
     <div class="card" id="swGoCard">
       <div id="swTotal" class="muted" style="margin-bottom:10px"></div>
       <label class="vtoggle" style="align-items:flex-start"><input type="checkbox" id="swRemove" checked style="margin-top:2px"> <span>Archive each old bin once it's empty — hides it from Bins and the fill report (you can restore it)</span></label>
-      <div class="note" style="text-align:left;margin:8px 0 12px">Items keep any other bins they're in. Every move is in the item's location history and is sent to ShipStation.</div>
+      <div class="note" style="text-align:left;margin:8px 0 12px">Items keep any other bins they're in. Every move is in the item's location history and is sent to ShipStation.<br>Reusing an old number for a new bin is fine: an archived bin comes back on its own as soon as something is put in it or you print its label.</div>
       <button class="btn wide" id="swGo" disabled onclick="swGo()"><i class="ti ti-arrows-sort"></i> Move</button>
     </div>
     <div id="swPlan"></div>
@@ -2339,7 +2339,7 @@ async function lblPrint(){
   const {list}=lblList(); if(!list.length) return;
   const copies=Number($("lblCopies").value)||1;
   const all=[]; for(const x of list) for(let i=0;i<copies;i++) all.push(x);
-  if($("lblAdd").checked){ try{ const r=await api("/api/bins/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({codes:list.map(x=>x.code)})}); if(r.added) toast(`${r.added} new bin${r.added===1?"":"s"} added`); }catch(e){} }
+  if($("lblAdd").checked){ try{ const r=await api("/api/bins/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({codes:list.map(x=>x.code)})}); if(r.added||r.restored) toast([r.added?`${r.added} new bin${r.added===1?"":"s"} added`:"", r.restored?`${r.restored} archived bin${r.restored===1?"":"s"} back in use`:""].filter(Boolean).join(" · ")); if(r.restored&&BR) BR._at=0; }catch(e){} }
   lblPrintList(all);
 }
 /* ---------- print one bin's label (the Label button on a bin) ---------- */

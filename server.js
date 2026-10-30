@@ -730,6 +730,24 @@ async function registerBinTokens(loc) {
 async function unarchiveTokens(loc, user) {
   try { await db(`DELETE FROM bin_archive WHERE key = ANY(SELECT bin_key(x) FROM unnest(regexp_split_to_array($1, '[,;/|]')) x WHERE trim(x) <> '')`, [loc]); } catch {}
 }
+// A bin code can be reused for a new bin while rebinning (old F-2 → F-26, then a new F-2). An archived bin that
+// holds items again is in use, so it stops being archived — the archive only ever hides empty, retired bins.
+async function pruneArchive() {
+  try {
+    const r = await db(`DELETE FROM bin_archive a WHERE EXISTS (
+        SELECT 1 FROM item_location il, unnest(regexp_split_to_array(il.bin, '[,;/|]')) x
+         WHERE il.bin IS NOT NULL AND trim(x) <> '' AND bin_key(x) = a.key) RETURNING code`);
+    if (r.rowCount) console.log(`📦 back in use, un-archived: ${r.rows.map((x) => x.code).join(", ")}`);
+    return r.rowCount;
+  } catch (e) { return 0; }
+}
+// One-off data fixes, each run exactly once (recorded in sr_fixes).
+async function oneTimeFixes() {
+  await db(`CREATE TABLE IF NOT EXISTS sr_fixes (name TEXT PRIMARY KEY, ran_at TIMESTAMPTZ DEFAULT now(), detail TEXT)`);
+  const once = async (name, fn) => { if ((await db(`SELECT 1 FROM sr_fixes WHERE name=$1`, [name])).rows.length) return; const d = await fn(); await db(`INSERT INTO sr_fixes (name,detail) VALUES ($1,$2)`, [name, d || null]); console.log(`🔧 ${name}: ${d}`); };
+  // 2026-10-30: F-2 was archived when the old F-2 was swapped into F-26, but the number is reused for a new bin.
+  await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
+}
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
 // Items in a bin = any item whose location contains that bin as one of its comma-separated tokens.
 async function binItems(code) {
@@ -753,7 +771,7 @@ async function readThroughBin(sku, title) {
          ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE(item_location.title,$3), updated_at=now(), updated_by='shipstation-read'`,
         [sku, loc, title || null]
       );
-      await registerBinTokens(loc);
+      await registerBinTokens(loc); await unarchiveTokens(loc);
       return loc;
     }
   } catch {}
@@ -779,7 +797,7 @@ async function syncFromShipStation() {
          ON CONFLICT (sku) DO UPDATE SET bin=$2, title=COALESCE(item_location.title,$3), updated_at=now(), updated_by='shipstation-import'`,
         [sku, loc, p.name || null]
       );
-      await registerBinTokens(loc);
+      await registerBinTokens(loc); await unarchiveTokens(loc);
       await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source) VALUES ($1,$2,$3,'import','import')`, [sku, cur ? cur.bin : null, loc]);
       if (cur) updated++; else imported++;
     }
@@ -928,7 +946,8 @@ async function resolveCode(raw) {
   const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
   if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
     const bin = knownBin.rows[0]?.code || binGuess;
-    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items: await binItems(bin), archived: await isArchived(bin) };
+    const items = await binItems(bin);
+    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(bin) };
   }
   // 2) item — try SKU first, then barcode (UPC/EAN). Also strip common order-barcode prefixes.
   let matches = await shopifyFind({ sku: code });
@@ -1434,7 +1453,8 @@ app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
-    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items: await binItems(req.params.code), archived: await isArchived(req.params.code) });
+    const items = await binItems(req.params.code);
+    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(req.params.code) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // History for a SKU.
@@ -1577,6 +1597,7 @@ app.post("/api/bins/unarchive", async (req, res) => {
 app.get("/api/bins/archived", async (req, res) => {
   if (!guard(req, res)) return;
   try {
+    await pruneArchive();
     const q = String(req.query.q || "").trim();
     const r = await db(`SELECT a.code, a.archived_by, a.archived_at, a.items_cleared,
           (SELECT count(*)::int FROM item_location il WHERE il.bin IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = a.key)) AS items
@@ -1607,6 +1628,7 @@ app.get("/api/bins", async (req, res) => {
   try {
     // Single-pass count: expand every item's location into tokens ONCE, group, then join to bins.
     // (The old per-bin correlated subquery was O(bins×items) and timed out on a full catalog.)
+    await pruneArchive();
     const r = await db(`
       WITH toks AS (
         SELECT trim(lower(x)) AS code FROM item_location, unnest(regexp_split_to_array(bin, '[,;/|]')) AS x
@@ -1656,8 +1678,12 @@ app.post("/api/bins/batch", async (req, res) => {
   try {
     const codes = [...new Set(((req.body && req.body.codes) || []).map((c) => String(c).trim().toUpperCase()).filter((c) => /^[A-Z0-9-]{1,20}$/.test(c)))].slice(0, 500);
     let added = 0;
-    for (const c of codes) { const r = await db(`INSERT INTO bins (code,label) SELECT $1,$1 WHERE NOT EXISTS (SELECT 1 FROM bins WHERE bin_key(code)=bin_key($1))`, [c]); added += r.rowCount; }
-    res.json({ ok: true, added, total: codes.length });
+    let restored = 0;
+    for (const c of codes) {
+      const r = await db(`INSERT INTO bins (code,label) SELECT $1,$1 WHERE NOT EXISTS (SELECT 1 FROM bins WHERE bin_key(code)=bin_key($1))`, [c]); added += r.rowCount;
+      restored += (await db(`DELETE FROM bin_archive WHERE key = bin_key($1)`, [c])).rowCount;     // labeling a bin = it's in use
+    }
+    res.json({ ok: true, added, restored, total: codes.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/bins/report", async (req, res) => {
@@ -1701,6 +1727,7 @@ app.get("/api/bins/report", async (req, res) => {
       if (!bins[k]) bins[k] = { ...binShape(k, x.code_raw, sides), label: null, items: [], unlisted: true };
       bins[k].items.push({ sku: x.sku, title: x.title, variant: x.variant, brands: x.brands, qty: x.qty, inactive: !!x.inactive, shared: (x.nbins || 1) > 1, verified_at: x.verified_at });
     }
+    await pruneArchive();
     const archived = new Set((await db(`SELECT key FROM bin_archive`)).rows.map((x) => x.key));
     for (const k of Object.keys(bins)) if (archived.has(k)) delete bins[k];
     const out = Object.values(bins).map((b) => {
@@ -1723,7 +1750,8 @@ app.post("/api/bins", async (req, res) => {
     const { code, label } = req.body || {};
     if (!code) return res.status(400).json({ error: "code required" });
     await db(`INSERT INTO bins (code,label) VALUES ($1,$2) ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label`, [code, label || code]);
-    res.json({ ok: true, code, label: label || code });
+    const restored = (await db(`DELETE FROM bin_archive WHERE key = bin_key($1)`, [code])).rowCount > 0;
+    res.json({ ok: true, code, label: label || code, restored });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Product NAME / SKU search across the whole Shopify catalog (all 3 stores), with current bins merged in.
@@ -1977,7 +2005,7 @@ app.get("/api/activity", async (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 (async () => {
-  try { await migrate(); await loadSessions(); console.log(`🗄️  Postgres schema ready · ${SESSIONS.size} signed-in sessions`); }
+  try { await migrate(); await loadSessions(); await pruneArchive(); await oneTimeFixes(); console.log(`🗄️  Postgres schema ready · ${SESSIONS.size} signed-in sessions`); }
   catch (e) { console.error("❌ DB migrate failed:", e.message); }
   app.listen(PORT, () => {
     console.log(`📦 Stockroom on :${PORT}`);
