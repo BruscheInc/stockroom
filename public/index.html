@@ -324,13 +324,13 @@
   .lblscale{transform-origin:top left}
   /* the label itself: 4in × 2in, pure black on white for thermal printers */
   .blabel{width:4in;height:2in;box-sizing:border-box;padding:.1in .12in;background:#fff;color:#000;display:flex;align-items:center;gap:.12in;font-family:"Figtree",Arial,Helvetica,sans-serif;overflow:hidden;break-inside:avoid}
-  .blabel .qr{width:1.72in;height:1.72in;flex:none;display:block}
-  .blabel .rt{flex:1;min-width:0;height:1.72in;display:flex;flex-direction:column;gap:.06in}
+  .blabel .qr{width:1.35in;height:1.35in;flex:none;display:block}
+  .blabel .rt{flex:1;min-width:0;height:1.8in;display:flex;flex-direction:column;gap:.05in}
   .blabel .boxes{flex:1;display:flex;gap:.08in;min-height:0}
   .blabel .bx{border:.045in solid #000;border-radius:.08in;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;line-height:1;overflow:hidden;box-sizing:border-box}
   .blabel .bx small{font-size:.11in;font-weight:800;letter-spacing:.06em;margin-bottom:.03in}
   .blabel .bx b{font-weight:900;line-height:.95;white-space:nowrap}
-  .blabel .code{font-size:.17in;font-weight:800;text-align:center;letter-spacing:.02em;white-space:nowrap}
+  .blabel .code{font-size:.15in;font-weight:800;text-align:center;letter-spacing:.02em;white-space:nowrap}
   .lblprint .blabel{page-break-after:always;break-after:page}
   .lblprint .blabel:last-child{page-break-after:auto;break-after:auto}
   #printArea{display:none}
@@ -2071,8 +2071,8 @@ function lblQR(text){
   tmp.remove(); return url;
 }
 function lblHTML(x){
-  // Right side is 1.92in wide: letter box + .08in gap + number box. Text is sized to fit both width and height.
-  const lw = x.L.length>1 ? 0.92 : 0.66, nw = 1.92-0.08-lw, pad=0.16, maxH=0.78;
+  // Right side is 2.29in wide: letter box + .08in gap + number box. Text is sized to fit both width and height.
+  const lw = x.L.length>1 ? 1.1 : 0.8, nw = 2.29-0.08-lw, pad=0.16, maxH=1.08;
   const fsL=Math.min(maxH,(lw-pad)/(0.78*x.L.length)), fsN=Math.min(maxH,(nw-pad)/(0.6*x.n.length));
   return `<div class="blabel">
     <img class="qr" src="${lblQR("BIN-"+x.code)}" alt="">
