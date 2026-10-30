@@ -575,6 +575,7 @@
     <div class="card">
       <h1 class="ph">Bin swap</h1>
       <div class="phsub">Move everything from up to 12 bins into new bins in one go. Scan or type each pair.</div>
+      <div class="note" id="swRebin" style="text-align:left;margin:-4px 0 6px"></div>
       <div id="swRows"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
         <button class="btn sec" id="swAdd" onclick="swAddRow(true)"><i class="ti ti-plus"></i> Add a bin</button>
@@ -2108,7 +2109,12 @@ async function sendOos(order){
 /* ---------- bin swap (up to 12 at a time) ---------- */
 const SW_MAX=12; let SW_ROWS=[], SW_UID=0, SW_STARTED=false;
 function swRow(id){ return SW_ROWS.find(r=>r.id===id); }
-function swInit(){ if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
+async function swRebinLine(){ try{ const d=await api("/api/settings/rebin");
+  $("swRebin").innerHTML = d.date ? `Rebinning since <b>${esc(fmtD(d.date+"T12:00:00"))}</b> — anything put in a bin since then is the new bin and stays put. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('${esc(d.date)}')">Change</a>`
+    : `Every item in a bin moves. <a style="color:var(--accent2);cursor:pointer" onclick="swRebinEdit('')">Set a rebinning start date</a>`; }catch(e){} }
+function swRebinEdit(cur){ $("swRebin").innerHTML=`Rebinning since <input type="date" id="swRebinDate" value="${esc(cur)}" style="min-height:32px;padding:0 8px"> <button class="btn sec sm" onclick="swRebinSave()">Save</button> <a style="color:var(--muted);cursor:pointer;margin-left:6px" onclick="swRebinLine()">Cancel</a>`; }
+async function swRebinSave(){ const v=$("swRebinDate").value; try{ const r=await api("/api/settings/rebin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date:v})}); if(r.error){ toast(r.error,true); return; } toast("Saved"); swRebinLine(); SW_ROWS.forEach(x=>{ if(x.from) swFetch(x); }); }catch(e){ toast("Couldn't save",true); } }
+function swInit(){ swRebinLine(); if(!SW_STARTED){ SW_STARTED=true; if(!SW_ROWS.length) swAddRow(false); } swArchList(); swCheckAll(); }
 // "E-17" → "E-18", "534-L" → "535-L": the next bin in the run, written the same way.
 function swNext(code){ const m=String(code||"").match(/^(.*?)(\d+)([^\d]*)$/); return m? m[1]+String(Number(m[2])+1)+m[3] : ""; }
 function swAddRow(focus,from,to){
@@ -2168,21 +2174,30 @@ function swPaint(r){
   if(c){ s.className="swsum bad"; s.textContent=c; return; }
   const n=p.items.length, units=p.items.reduce((a,i)=>a+(Number(i.qty)||0),0);
   if(!n){ s.className="swsum warn"; s.innerHTML=`<b>${esc(p.from)}</b> is empty${p.from_archived?" and already archived":" — nothing to move"+( $("swRemove")&&$("swRemove").checked?", it'll just be archived":"")}.`; return; }
-  s.className="swsum ok swtog";
+  const mv=p.items.filter(i=>!i.new_bin), st=p.items.filter(i=>i.new_bin), us=mv.reduce((a,i)=>a+(Number(i.qty)||0),0);
   s.onclick=()=>swToggle(r.id);
-  s.innerHTML=`<i class="ti ti-chevron-right swcar${r.open?" open":""}"></i> <b>${esc(p.from)}</b>: ${n} item${n===1?"":"s"} · ${units} unit${units===1?"":"s"}${p.to?` → <b>${esc(p.to)}</b>${p.to_count?` (has ${p.to_count})`:" (empty)"}`:' — <span style="color:var(--warn)">enter where it goes</span>'}`;
-  if(r.open) det.innerHTML=`<table style="font-size:13px;margin-top:4px"><tbody>${p.items.map(i=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · already in ${esc(p.to)}`:""}</span></td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`).join("")}</tbody></table>`;
+  if(!mv.length){ s.className="swsum warn swtog";
+    s.innerHTML=`<i class="ti ti-chevron-right swcar${r.open?" open":""}"></i> Nothing old to move — the ${st.length} item${st.length===1?"":"s"} in <b>${esc(p.from)}</b> ${st.length===1?"was":"were"} put there since rebinning started (new ${esc(p.from)}).`; }
+  else { s.className="swsum ok swtog";
+    s.innerHTML=`<i class="ti ti-chevron-right swcar${r.open?" open":""}"></i> <b>${esc(p.from)}</b>: ${mv.length} item${mv.length===1?"":"s"} · ${us} unit${us===1?"":"s"}${p.to?` → <b>${esc(p.to)}</b>${p.to_count?` (has ${p.to_count})`:" (empty)"}`:' — <span style="color:var(--warn)">enter where it goes</span>'}`
+      +(st.length?` · <span style="color:var(--ink)">${st.length} stay${st.length===1?"s":""} (new ${esc(p.from)})</span>`:""); }
+  if(r.open){
+    const line=(i,stay)=>`<tr onclick="lookup('${esc(i.sku)}')" style="cursor:pointer${stay?";opacity:.55":""}"><td><span class="mono">${esc(i.sku)}</span> <span class="muted">${esc(i.title||"")}${i.other_bins.length?` · also in ${esc(i.other_bins.join(", "))}`:""}${i.already_in_to?` · already in ${esc(p.to)}`:""}</span>${stay?`<div style="font-size:12px;color:var(--warn);font-weight:600">stays — put in ${esc(p.from)} ${fmt(i.since)}${i.since_by?` · ${esc(i.since_by)}`:""}</div>`:""}</td><td class="n"><b>${i.qty==null?"—":i.qty}</b></td></tr>`;
+    det.innerHTML=`<table style="font-size:13px;margin-top:4px"><tbody>${mv.map(i=>line(i,false)).join("")}${st.map(i=>line(i,true)).join("")}</tbody></table>`;
+  }
 }
 function swToggle(id){ const r=swRow(id); if(!r) return; r.open=!r.open; swPaint(r); }
 // Rows that are ready to go, plus the summary and the Move button.
 function swReady(){
   const c=swConflicts(), archive=$("swRemove").checked;
   return SW_ROWS.filter(r=>{ const p=r.plan; if(!r.from||!p||p.error||p.same||c[r.id]||r.loading) return false;
-    return p.items.length ? !!p.to : (archive && !p.from_archived); });
+    const mv=p.items.filter(i=>!i.new_bin).length;
+    return p.items.length ? (!!p.to && mv>0) : (archive && !p.from_archived); });
 }
 function swCheckAll(){
   SW_ROWS.forEach(swPaint);
-  const ready=swReady(), filled=SW_ROWS.filter(r=>r.from), items=ready.reduce((a,r)=>a+r.plan.items.length,0), units=ready.reduce((a,r)=>a+r.plan.items.reduce((x,i)=>x+(Number(i.qty)||0),0),0);
+  const selOf=(r)=>r.plan.items.filter(i=>!i.new_bin);
+  const ready=swReady(), filled=SW_ROWS.filter(r=>r.from), items=ready.reduce((a,r)=>a+selOf(r).length,0), units=ready.reduce((a,r)=>a+selOf(r).reduce((x,i)=>x+(Number(i.qty)||0),0),0);
   const bad=filled.length-ready.length, btn=$("swGo");
   $("swTotal").innerHTML = filled.length ? `<b style="color:var(--ink)">${ready.length} bin${ready.length===1?"":"s"} ready</b> · ${items} item${items===1?"":"s"} · ${units} unit${units===1?"":"s"}${bad?` · <span style="color:var(--warn)">${bad} row${bad===1?"":"s"} need${bad===1?"s":""} attention</span>`:""}` : "Add the bins you're moving above.";
   btn.disabled=!ready.length;
@@ -2191,8 +2206,9 @@ function swCheckAll(){
 document.addEventListener("change",(e)=>{ if(e.target&&e.target.id==="swRemove") swCheckAll(); });
 async function swGo(){
   const ready=swReady(); if(!ready.length) return;
-  const items=ready.reduce((a,r)=>a+r.plan.items.length,0);
-  if(!confirm(`Move ${items} item${items===1?"":"s"} from ${ready.length} bin${ready.length===1?"":"s"}?\n\n`+ready.map(r=>`${r.plan.from} → ${r.plan.to||"(archive)"}`).join("\n"))) return;
+  const selOf=(r)=>r.plan.items.filter(i=>!i.new_bin);
+  const items=ready.reduce((a,r)=>a+selOf(r).length,0);
+  if(!confirm(`Move ${items} item${items===1?"":"s"} from ${ready.length} bin${ready.length===1?"":"s"}?\n\n`+ready.map(r=>`${r.plan.from} → ${r.plan.to||"(archive)"}${r.plan.staying?`  (${r.plan.staying} new-bin item${r.plan.staying===1?" stays":"s stay"})`:""}`).join("\n"))) return;
   const b=$("swGo"); b.disabled=true; b.textContent=`Moving ${ready.length} bin${ready.length===1?"":"s"}…`;
   try{
     const r=await api("/api/bins/swap-many",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairs:ready.map(x=>({from:x.plan.from,to:x.plan.to})),removeFrom:$("swRemove").checked})});
@@ -2201,7 +2217,7 @@ async function swGo(){
     $("swPlan").innerHTML=`<div class="card">
       <p style="margin:0 0 8px;font-size:16px"><b>${r.moved} item${r.moved===1?"":"s"} moved from ${okRows.length} bin${okRows.length===1?"":"s"}.</b></p>
       ${r.results.map(x=>`<div class="row" style="padding:7px 0"><span><span class="mono" style="font-weight:700">${esc(x.from)}</span> <i class="ti ti-chevron-right muted" style="font-size:12px"></i> <span class="mono" style="font-weight:700">${esc(x.to||"—")}</span></span>
-        <span style="text-align:right;font-size:13px">${x.ok?`${x.moved} moved${x.removed?' · <span class="muted">archived</span>':""}${x.failed.length?` · <span style="color:var(--bad)">${x.failed.length} failed</span>`:""}`:`<span style="color:var(--bad)">${esc(x.error)}</span>`}</span></div>`).join("")}
+        <span style="text-align:right;font-size:13px">${x.ok?`${x.moved} moved${x.left?` · <span class="muted">${x.left} new-${esc(x.from)} item${x.left===1?"":"s"} stayed</span>`:""}${x.removed?' · <span class="muted">archived</span>':""}${x.failed.length?` · <span style="color:var(--bad)">${x.failed.length} failed</span>`:""}`:`<span style="color:var(--bad)">${esc(x.error)}</span>`}</span></div>`).join("")}
       <p class="muted" style="margin:10px 0 12px;font-size:13px">ShipStation is being updated in the background${r.shipstation_pending?` (${r.shipstation_pending} to go — about ${Math.ceil(r.shipstation_pending*5/60)} min)`:""}.</p>
       ${badRows.length?'<div class="note" style="text-align:left;color:var(--warn);margin:0 0 10px">Rows that didn\'t finish are still listed above — check them and press Move again.</div>':""}
     </div>`;

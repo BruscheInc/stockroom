@@ -120,6 +120,8 @@ async function migrate() {
                 ELSE c END FROM (SELECT bin_canon(t) AS c) s $$`);
   await db(`CREATE INDEX IF NOT EXISTS idx_loc_bin ON item_location(bin)`);
   // Archived bins: hidden from the bin list and reports (keyed by bin identity, so any spelling matches). Reversible.
+  await db(`CREATE TABLE IF NOT EXISTS sr_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TIMESTAMPTZ DEFAULT now())`);
+  await db(`INSERT INTO sr_settings (key,value,updated_by) VALUES ('rebin_since','2026-10-30','setup') ON CONFLICT (key) DO NOTHING`);
   await db(`CREATE TABLE IF NOT EXISTS bin_archive (key TEXT PRIMARY KEY, code TEXT, archived_by TEXT, archived_at TIMESTAMPTZ DEFAULT now(), items_cleared INT DEFAULT 0)`);
   // Stock Verification — a Shopify on-hand snapshot per SKU/brand, the latest physical count per SKU, and an audit log.
   await db(`CREATE TABLE IF NOT EXISTS stock_items (
@@ -1485,7 +1487,15 @@ async function binSkus(key) {
                      WHERE il.bin IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(il.bin, '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $1)
                      ORDER BY il.sku`, [key])).rows;
 }
+// Rebinning start (a date, Central time). Anything put into a bin number on/after it is the NEW bin with that number;
+// a swap only moves what was in the OLD bin and leaves the new bin's items where they are.
+async function rebinSince() {
+  const v = ((await db(`SELECT value FROM sr_settings WHERE key='rebin_since'`)).rows[0] || {}).value;
+  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`); return { date: v, at: new Date(d.getTime() - tzOffsetMin(d, "America/Chicago") * 60000) };
+}
 async function swapPlan(fromRaw, toRaw) {
+  const rb = await rebinSince();
   const from = await houseCode(fromRaw), to = toRaw ? await houseCode(toRaw) : null;
   if (!from) throw new Error("Enter the bin to empty.");
   const rows = await binSkus(from.key);
@@ -1496,6 +1506,13 @@ async function swapPlan(fromRaw, toRaw) {
   const qs = Object.fromEntries(q.map((x) => [x.sku, x]));
   const toRows = to ? await binSkus(to.key) : [];
   const keysOf = async (bin) => (await db(`SELECT trim(x) AS t, bin_key(x) AS k FROM unnest(regexp_split_to_array($1, '[,;/|]')) x WHERE trim(x) <> ''`, [bin])).rows;
+  // When each item was last put into this bin number, and by whom — tells an old bin's stock from a new bin
+  // that reuses the same number (old F-25 vs new F-25).
+  const since = skus.length ? Object.fromEntries((await db(`SELECT DISTINCT ON (h.sku) h.sku, h.ts, h.user_name, h.source FROM location_history h
+      WHERE h.sku = ANY($1)
+        AND EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(h.to_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $2)
+        AND NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(h.from_bin,''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = $2)
+      ORDER BY h.sku, h.ts DESC`, [skus, from.key])).rows.map((x) => [x.sku, x])) : {};
   const items = [];
   for (const r of rows) {
     const toks = await keysOf(r.bin);
@@ -1504,11 +1521,14 @@ async function swapPlan(fromRaw, toRaw) {
     const seen = new Set(); next = next.filter((t) => { const k = t.toUpperCase().replace(/[\s-]/g, ""); if (seen.has(k)) return false; seen.add(k); return true; });
     const x = qs[r.sku] || {};
     items.push({ sku: r.sku, title: x.title || r.title, variant: x.variant || null, qty: x.has_active ? x.act : (x.allq ?? null), inactive: x.sku ? !x.has_active : false,
-      bin: r.bin, other_bins: others, next: next.join(", "), already_in_to: !!(to && toks.some((t) => t.k === to.key)) });
+      bin: r.bin, other_bins: others, next: next.join(", "), already_in_to: !!(to && toks.some((t) => t.k === to.key)),
+      since: since[r.sku] ? since[r.sku].ts : null, since_by: since[r.sku] ? (since[r.sku].source === "import" ? "ShipStation" : since[r.sku].user_name) : null,
+      new_bin: !!(rb && since[r.sku] && new Date(since[r.sku].ts) >= rb.at) });
   }
   const listed = (await db(`SELECT 1 FROM bins WHERE bin_key(code) = $1`, [from.key])).rows.length > 0;
   const arch = (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = $1`, [from.key])).rows[0] || null;
-  return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed, from_archived: arch };
+  return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed, from_archived: arch, rebin_since: rb ? rb.date : null,
+    moving: items.filter((i) => !i.new_bin).length, staying: items.filter((i) => i.new_bin).length };
 }
 app.get("/api/bins/swap", async (req, res) => {
   if (!guard(req, res)) return;
@@ -1516,9 +1536,13 @@ app.get("/api/bins/swap", async (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 // One swap: move everything from → to; optionally archive the emptied bin.
-async function doSwap({ from, to, removeFrom, by }) {
+// skus (optional): move only these items — the rest stay, and the bin isn't archived while it still holds them.
+async function doSwap({ from, to, removeFrom, by, skus }) {
   const plan = await swapPlan(from, to);
+  if (Array.isArray(skus)) { const pick = new Set(skus.map(String)); plan.items = plan.items.filter((i) => pick.has(String(i.sku))); }
+  else plan.items = plan.items.filter((i) => !i.new_bin);       // only the old bin's items move; the new bin's stay
   if (!plan.to && plan.items.length) { const e = new Error("Enter the bin to move everything into."); e.status = 400; throw e; }
+  const staying = plan.staying || 0;
   if (plan.same) { const e = new Error("That's the same bin."); e.status = 400; throw e; }
   const note = plan.to ? `Bin swap ${plan.from} → ${plan.to}` : `Removed bin ${plan.from}`;
   let moved = 0; const failed = [];
@@ -1531,11 +1555,11 @@ async function doSwap({ from, to, removeFrom, by }) {
   if (removeFrom && !failed.length && !(await binSkus(plan.from_key)).length) {
     await archiveBin(plan.from_key, plan.from, by, 0); removed = true;      // archived (hidden, can be restored)
   }
-  return { ok: true, from: plan.from, to: plan.to, moved, failed, removed };
+  return { ok: true, from: plan.from, to: plan.to, moved, failed, removed, left: staying };
 }
 app.post("/api/bins/swap", async (req, res) => {
   if (!guard(req, res)) return;
-  try { const { from, to, removeFrom } = req.body || {}; res.json({ ...(await doSwap({ from, to, removeFrom, by: actorOf(req) })), shipstation_pending: SSQ.size }); }
+  try { const { from, to, removeFrom, skus } = req.body || {}; res.json({ ...(await doSwap({ from, to, removeFrom, skus, by: actorOf(req) })), shipstation_pending: SSQ.size }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 // Up to 12 swaps in one go (E-17 → R-35, E-18 → R-36 …). Checked first so a bin can't be both emptied and filled.
@@ -1604,6 +1628,16 @@ app.get("/api/bins/archived", async (req, res) => {
         FROM bin_archive a ${q ? "WHERE a.code ILIKE '%'||$1||'%' OR a.key = bin_key($1)" : ""} ORDER BY a.archived_at DESC LIMIT 300`, q ? [q] : []);
     const n = (await db(`SELECT count(*)::int AS n FROM bin_archive`)).rows[0].n;
     res.json({ bins: r.rows, total: n });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/settings/rebin", async (req, res) => { if (!guard(req, res)) return; try { const r = await rebinSince(); res.json({ date: r ? r.date : null }); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.post("/api/settings/rebin", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const v = String((req.body && req.body.date) || "").trim();
+    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return res.status(400).json({ error: "Pick a date." });
+    await db(`INSERT INTO sr_settings (key,value,updated_by,updated_at) VALUES ('rebin_since',$1,$2,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by, updated_at=now()`, [v || null, actorOf(req)]);
+    res.json({ ok: true, date: v || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/shipstation-queue", (req, res) => { if (!guard(req, res)) return; res.json({ pending: SSQ.size, running: ssqRunning, done: ssqDone, failed: ssqFailed.slice(-10) }); });
