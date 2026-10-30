@@ -1688,7 +1688,7 @@ app.get("/api/bins/archived", async (req, res) => {
 });
 /* ---- Undo every bin change made on 2026-10-30 (rebinning restart) ---- */
 const REVERT_SINCE = "2026-10-30T05:00:00Z";          // midnight Central
-const REVERT_APPLY = false;                            // dry run first
+const REVERT_APPLY = true;                             // approved by Jose 2026-10-30 15:09 — runs once
 async function revertPlan() {
   const first = (await db(`SELECT DISTINCT ON (sku) sku, from_bin, ts FROM location_history
                             WHERE ts >= $1 AND source <> 'revert' ORDER BY sku, ts, id`, [REVERT_SINCE])).rows;
