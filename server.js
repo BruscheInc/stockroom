@@ -1605,6 +1605,9 @@ async function swapPlan(fromRaw, toRaw) {
       since: since[r.sku] ? since[r.sku].ts : null, since_by: since[r.sku] ? (since[r.sku].source === "import" ? "ShipStation" : since[r.sku].user_name) : null,
       new_bin: !!(rb && since[r.sku] && new Date(since[r.sku].ts) >= rb.at) });
   }
+  // The old/new split only matters for a REUSED number: a bin holding both older items and items put in since the
+  // rebin start. If everything in it arrived after the start (a brand-new bin), it all moves.
+  if (items.length && items.every((i) => i.new_bin)) for (const i of items) i.new_bin = false;
   const listed = (await db(`SELECT 1 FROM bins WHERE bin_key(code) = $1`, [from.key])).rows.length > 0;
   const arch = (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = $1`, [from.key])).rows[0] || null;
   return { from: from.code, from_key: from.key, to: to ? to.code : null, to_key: to ? to.key : null, same: !!(to && to.key === from.key), items, to_count: toRows.length, from_listed: listed, from_archived: arch, rebin_since: rb ? rb.date : null,
