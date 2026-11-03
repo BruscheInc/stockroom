@@ -738,7 +738,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   if (batch && ssConfigured()) { await ssQueuePush(sku, finalBin || ""); shipstation = { queued: true }; }
   else if (ssConfigured()) {
     try { const r = await ssSetWarehouseLocation(sku, finalBin || ""); shipstation = { pushed: true, ...r }; }
-    catch (e) { shipstation = { pushed: false, error: e.message }; }
+    catch (e) { shipstation = { pushed: false, error: e.message }; console.error(`📦 ShipStation update ${sku} → ${finalBin || ""} failed:`, e.message); }
   }
   return { sku, from_bin: fromBin, to_bin: finalBin, shipstation };
 }
@@ -2240,6 +2240,25 @@ const PORT = process.env.PORT || 8080;
       .catch((e) => console.error(`📥 sync failed (${tag}):`, e.message));
     console.log("📥 syncing bins from ShipStation on boot…");
     ssqRun();                        // pick up any ShipStation updates still waiting from before the restart
+    // Read-only check: do ShipStation's bins match Stockroom for items moved in the last 4 days?
+    (async () => {
+      try {
+        const q = await ssqCount();
+        const moved = (await db(`SELECT DISTINCT ON (h.sku) h.sku, h.ts, h.source, coalesce(il.bin,'') AS bin FROM location_history h JOIN item_location il ON il.sku=h.sku
+                                  WHERE h.ts > now() - interval '4 days' AND h.source NOT IN ('import') ORDER BY h.sku, h.ts DESC`)).rows
+                       .sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 20);
+        console.log(`🔍 ss-check: queue waiting=${q} · checking ${moved.length} recently moved items against ShipStation`);
+        for (const m of moved) {
+          const j = await ssReq("GET", `/products?sku=${encodeURIComponent(m.sku)}&pageSize=50`);
+          const list = (j && j.products) || [];
+          const exact = list.filter((p) => String(p.sku || "").toLowerCase() === String(m.sku).toLowerCase());
+          const locs = exact.map((p) => `${p.productId}:"${p.warehouseLocation || ""}"${p.active === false ? "(inactive)" : ""}`).join(" ");
+          const ok = exact.length && exact.every((p) => String(p.warehouseLocation || "").replace(/\s+/g, "").toUpperCase() === m.bin.replace(/\s+/g, "").toUpperCase());
+          console.log(`🔍 ${ok ? "OK " : "BAD"} ${m.sku} (${m.source} ${new Date(m.ts).toISOString().slice(0, 16)}) stockroom="${m.bin}" · search returned ${list.length}, exact ${exact.length}: ${locs || "—"}${!exact.length && list.length ? ` · first result is ${list[0].sku}` : ""}`);
+          await new Promise((ok) => setTimeout(ok, 2000));
+        }
+      } catch (e) { console.error("🔍 ss-check failed:", e.message); }
+    })();
     runSync("boot");
     setInterval(() => runSync("6h"), 6 * 60 * 60 * 1000);
     // Shipments → activity log. First run back-fills 14 days; after that every 10 min re-reads the last
