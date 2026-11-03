@@ -626,7 +626,14 @@ async function refreshOrderBins(tag) {
           }
           if (!n) continue;
           try {
-            await ssReq("POST", `/orders/createorder`, o);
+            try { await ssReq("POST", `/orders/createorder`, o); }
+            catch (e) {
+              // Some orders point at a ship-from warehouse ShipStation no longer accepts; post again without it.
+              if (!/invalid warehouseid/i.test(e.message)) throw e;
+              console.log(`🧾 order ${o.orderNumber}: warehouseId ${adv.warehouseId} rejected — updating without it`);
+              delete adv.warehouseId; await new Promise((ok) => setTimeout(ok, 1600));
+              await ssReq("POST", `/orders/createorder`, o);
+            }
             updated++; lines += n;
             if (!firstShown) { firstShown = true;
               const back = await ssReq("GET", `/orders/${o.orderId}`);
