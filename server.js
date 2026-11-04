@@ -877,6 +877,18 @@ async function oneTimeFixes() {
         FROM parsed p GROUP BY loc ORDER BY loc`);
     for (const x of r.rows) console.log(`🔢 ${x.loc}: ${x.n} numbers in use, ${x.mn}–${x.mx} · ${String(x.ranges).slice(0, 400)}`);
   } catch (e) { console.error("🔢 failed:", e.message); }
+  // Read-only: the 115-B → F-164 swap — where those items are now, what F-164 holds, and the other swaps in that batch.
+  try {
+    const sk = ["BB11CN26X591218","BB11CN26X591824","BB11CN26X592T","BB11CN26X59612","BB4X64ZOS","BB4X65ZOS","BB4X66ZOS","BB4X67ZOS","BB4X68ZOS","BB4X69ZOS","BB9X152Z4T","BB9X152Z5T6T","BB9X152Z7Y8Y","BB9X152Z9Y10Y"];
+    const now = (await db(`SELECT sku, coalesce(bin,'') bin, updated_by, updated_at FROM item_location WHERE sku = ANY($1) ORDER BY sku`, [sk])).rows;
+    for (const x of now) console.log(`🧭 ${x.sku} now in "${x.bin}" (set by ${x.updated_by} ${new Date(x.updated_at).toISOString().slice(0,16)}Z)`);
+    const f = (await db(`SELECT sku, bin FROM item_location WHERE EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(bin,''), '[,;/|]')) x WHERE trim(x)<>'' AND bin_key(x)=bin_key('F-164'))`)).rows;
+    console.log(`🧭 F-164 holds ${f.length} items${f.length ? ": " + f.map((x) => x.sku).join(" ") : ""}`);
+    const b = (await db(`SELECT note, user_name, min(ts) ts, count(*)::int n FROM location_history WHERE source='swap' AND ts BETWEEN '2026-10-30T20:15:00Z' AND '2026-10-31T06:00:00Z' GROUP BY note, user_name ORDER BY min(ts)`)).rows;
+    for (const x of b) console.log(`🧭 batch ${new Date(x.ts).toISOString().slice(11,16)}Z ${x.note} · ${x.n} items · ${x.user_name}`);
+    const fl = (await db(`SELECT code FROM bins WHERE bin_key(code) ~ '^F\\|' ORDER BY NULLIF(split_part(bin_key(code),'|',2),'')::int DESC NULLS LAST LIMIT 5`)).rows;
+    console.log(`🧭 highest F bins on file: ${fl.map((x) => x.code).join(", ")}`);
+  } catch (e) { console.error("🧭 check failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
