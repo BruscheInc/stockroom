@@ -877,6 +877,18 @@ async function oneTimeFixes() {
         FROM parsed p GROUP BY loc ORDER BY loc`);
     for (const x of r.rows) console.log(`🔢 ${x.loc}: ${x.n} numbers in use, ${x.mn}–${x.mx} · ${String(x.ranges).slice(0, 400)}`);
   } catch (e) { console.error("🔢 failed:", e.message); }
+  // Read-only: full trail for one bin, printed to the log.
+  try {
+    const BIN = "115-B";
+    const has = (col) => `EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(${col},''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = bin_key($1))`;
+    const h = (await db(`SELECT ts, sku, from_bin, to_bin, user_name, source, note FROM location_history
+                          WHERE (${has("from_bin")} OR ${has("to_bin")}) OR (note ILIKE '%' || $1 || '%') ORDER BY ts, id LIMIT 300`, [BIN])).rows;
+    const now = (await db(`SELECT sku, bin FROM item_location WHERE ${has("bin")} ORDER BY sku`, [BIN])).rows;
+    const arc = (await db(`SELECT code, archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [BIN])).rows[0];
+    console.log(`🧭 ${BIN}: ${h.length} history rows · ${now.length} items in it now · ${arc ? `archived by ${arc.archived_by} ${new Date(arc.archived_at).toISOString()}` : "not archived"}`);
+    for (const x of h) console.log(`🧭 ${new Date(x.ts).toISOString().slice(0, 16)}Z ${x.sku}: "${x.from_bin || ""}" → "${x.to_bin || ""}" · ${x.user_name || ""} (${x.source || ""})${x.note ? " · " + x.note : ""}`);
+    console.log(`🧭 ${BIN} now holds: ${now.map((x) => `${x.sku}[${x.bin}]`).join(" ") || "nothing"}`);
+  } catch (e) { console.error("🧭 bin trail failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }

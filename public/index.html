@@ -1015,6 +1015,14 @@ function renderItem(d){
           <div style="margin-top:6px">${binPill}${osPill}</div>
         </div>
       </div>
+      <div class="sectlabel" style="margin-top:14px">Bins (${bins.length}/3)</div>
+      <div class="chipwrap">${chips}</div>
+      ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
+          <input id="assignBin" data-osk="1" inputmode="none" placeholder="Scan or type a bin" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
+          <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label"><i class="ti ti-camera"></i></button>
+          <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
+        </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
+        : `<div class="note">Max 3 bins — remove one (×) to add another.</div>`}
       <div class="verline">${verTag(v&&v.verified_at, v&&v.verified_by)}${v&&v.counted_qty!=null?`<span class="muted">counted ${v.counted_qty}</span>`:""}</div>
       <div class="qtygrid"><div class="k" style="align-self:end">On hand (active)</div><div class="big">${d.total_qty==null?"—":d.total_qty}</div></div>
       ${d.totals&&d.totals.available!=null?`<div class="invsum"><span><b>${d.totals.available}</b> available</span><span><b>${d.totals.committed}</b> committed</span><span><b>${d.totals.unavailable}</b> unavailable</span></div>`:""}
@@ -1030,15 +1038,7 @@ function renderItem(d){
       <div id="actbox">${actRows(d.activity)}</div>
     </div>
     <div class="card">
-      <div class="sectlabel" style="margin-top:0">Bins (${bins.length}/3)</div>
-      <div class="chipwrap">${chips}</div>
-      ${bins.length<3 ? `<div class="moverow" style="margin-top:12px">
-          <input id="assignBin" data-osk="1" inputmode="none" placeholder="Scan or type a bin to assign" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')assignItemBin('${esc(d.sku)}')">
-          <button class="btn blue" onclick="scanBinForItem('${esc(d.sku)}')" title="Scan a bin label"><i class="ti ti-camera"></i></button>
-          <button class="btn" onclick="assignItemBin('${esc(d.sku)}')">Assign</button>
-        </div><div class="note">Up to 3 bins per item (overstock / extra locations). Saves + pushes to ShipStation.</div>`
-        : `<div class="note">Max 3 bins — remove one (×) to add another.</div>`}
-      <div class="sectlabel">Overstock cartons</div>
+      <div class="sectlabel" style="margin-top:0">Overstock cartons</div>
       ${osBoxes.length ? `<div class="chipwrap">
           ${osBoxes.map(b=>`<span class="binchip" style="cursor:pointer" onclick="showOverstockBox('${esc(b.box)}')"><i class="ti ti-package"></i> ${esc(b.box)}${b.qty!=null?` <span class="muted">${b.qty}</span>`:""}</span>`).join("")}
           <button class="btn sec" style="padding:6px 12px" onclick="editOverstock('${esc(d.sku)}','${esc(os.manual_box||"")}')"><i class="ti ti-pencil"></i> Change</button>
@@ -1064,24 +1064,23 @@ function renderBin(d){
       <td onclick="lookup('${esc(it.sku)}')" style="cursor:pointer"><div class="mono">${esc(it.sku)}</div><div class="muted" style="font-size:12px">${esc(it.title||"")}</div><div>${verTag(it.verified_at,it.verified_by)}</div></td>
       <td class="n"><button class="btn ghost" style="padding:6px 12px" onclick="removeFromBin('${esc(it.sku)}','${b}')">Remove</button></td>
     </tr>`).join("")
-    : '<tr><td colspan="2" class="muted">No items in this bin yet — add one below.</td></tr>';
+    : '<tr><td colspan="2" class="muted">No items in this bin yet — add one above.</td></tr>';
   $("result").innerHTML=`
     <div class="card">
       <div style="display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap">
         <span class="pill bin" style="font-size:15px;white-space:nowrap"><i class="ti ti-building-warehouse"></i> ${b}</span>${d.archived?` <span class="role">Archived</span> <button class="btn sec sm" onclick="swRestore(${esc(JSON.stringify(d.bin))})">Restore</button>`:""}
         <div class="sub" style="flex:1;white-space:nowrap">${(d.items?d.items.length:0)} item${(d.items&&d.items.length===1)?"":"s"}</div>
+        <div class="moverow" style="width:100%">
+          <input id="binAdd" data-osk="1" inputmode="none" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
+            onkeydown="if(event.key==='Enter')addToBin('${b}')">
+          <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera"><i class="ti ti-camera"></i></button>
+          <button class="btn" onclick="addToBin('${b}')">Add</button>
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;width:100%">
         <button class="btn sec sm" onclick="swFromBin('${b}')"><i class="ti ti-arrows-sort"></i> Move all</button>
         <button class="btn sec sm" onclick="clearBin('${b}')">Remove all</button>
         <button class="btn sec sm" onclick="printLabel('${b}','${esc(d.label||"")}')"><i class="ti ti-printer"></i> Label</button>
         </div>
-      </div>
-      <div class="sectlabel" style="margin-top:12px">Add an item to this bin</div>
-      <div class="moverow">
-        <input id="binAdd" data-osk="1" inputmode="none" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off"
-          onkeydown="if(event.key==='Enter')addToBin('${b}')">
-        <button class="btn blue" onclick="scanIntoBin('${b}')" title="Scan with camera"><i class="ti ti-camera"></i></button>
-        <button class="btn" onclick="addToBin('${b}')">Add</button>
       </div>
       <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
