@@ -763,6 +763,9 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   if (!sku) throw new Error("sku required");
   const cur = await getItemLocation(sku);
   const fromBin = cur ? cur.bin : null;
+  // A scanned bin label reads "BIN-K-122" — keep just the bin code.
+  const unlabel = (x) => (x == null ? x : String(x).split(/\s*,\s*/).map((t) => t.trim().replace(/^BIN[-:]/i, "")).join(", "));
+  addBin = unlabel(addBin); toBin = unlabel(toBin);
   // Compute the new location string based on the operation.
   let finalBin;
   const toks = binTokens(fromBin);
@@ -877,18 +880,18 @@ async function oneTimeFixes() {
         FROM parsed p GROUP BY loc ORDER BY loc`);
     for (const x of r.rows) console.log(`🔢 ${x.loc}: ${x.n} numbers in use, ${x.mn}–${x.mx} · ${String(x.ranges).slice(0, 400)}`);
   } catch (e) { console.error("🔢 failed:", e.message); }
-  // Read-only: the 115-B → F-164 swap — where those items are now, what F-164 holds, and the other swaps in that batch.
-  try {
-    const sk = ["BB11CN26X591218","BB11CN26X591824","BB11CN26X592T","BB11CN26X59612","BB4X64ZOS","BB4X65ZOS","BB4X66ZOS","BB4X67ZOS","BB4X68ZOS","BB4X69ZOS","BB9X152Z4T","BB9X152Z5T6T","BB9X152Z7Y8Y","BB9X152Z9Y10Y"];
-    const now = (await db(`SELECT sku, coalesce(bin,'') bin, updated_by, updated_at FROM item_location WHERE sku = ANY($1) ORDER BY sku`, [sk])).rows;
-    for (const x of now) console.log(`🧭 ${x.sku} now in "${x.bin}" (set by ${x.updated_by} ${new Date(x.updated_at).toISOString().slice(0,16)}Z)`);
-    const f = (await db(`SELECT sku, bin FROM item_location WHERE EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(bin,''), '[,;/|]')) x WHERE trim(x)<>'' AND bin_key(x)=bin_key('F-164'))`)).rows;
-    console.log(`🧭 F-164 holds ${f.length} items${f.length ? ": " + f.map((x) => x.sku).join(" ") : ""}`);
-    const b = (await db(`SELECT note, user_name, min(ts) ts, count(*)::int n FROM location_history WHERE source='swap' AND ts BETWEEN '2026-10-30T20:15:00Z' AND '2026-10-31T06:00:00Z' GROUP BY note, user_name ORDER BY min(ts)`)).rows;
-    for (const x of b) console.log(`🧭 batch ${new Date(x.ts).toISOString().slice(11,16)}Z ${x.note} · ${x.n} items · ${x.user_name}`);
-    const fl = (await db(`SELECT code FROM bins WHERE bin_key(code) ~ '^F\\|' ORDER BY NULLIF(split_part(bin_key(code),'|',2),'')::int DESC NULLS LAST LIMIT 5`)).rows;
-    console.log(`🧭 highest F bins on file: ${fl.map((x) => x.code).join(", ")}`);
-  } catch (e) { console.error("🧭 check failed:", e.message); }
+  await once("strip-BIN-prefix-from-bins-2026-11-04", async () => {
+    const r = (await db(`SELECT sku, bin FROM item_location WHERE bin ~* '(^|,)\\s*BIN[-:]'`)).rows;
+    for (const x of r) {
+      const clean = [...new Set(binTokens(x.bin).map((t) => t.replace(/^BIN[-:]/i, "")))].join(", ");
+      await db(`UPDATE item_location SET bin=$2, updated_at=now(), updated_by='cleanup' WHERE sku=$1`, [x.sku, clean]);
+      await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source,note) VALUES ($1,$2,$3,'cleanup','cleanup','Removed BIN- prefix from a scanned label')`, [x.sku, x.bin, clean]);
+      await registerBinTokens(clean);
+      await ssQueuePush(x.sku, clean);
+      console.log(`🧹 ${x.sku}: "${x.bin}" → "${clean}"`);
+    }
+    return `${r.length} items fixed`;
+  });
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
@@ -1608,8 +1611,22 @@ async function binSwaps(code) {
            bool_and(rv.at IS NOT NULL AND s.ts >= $2 AND s.ts < rv.at) AS undone, bool_or(bin_key(s.f) = bin_key($1)) AS out
       FROM s, rv WHERE bin_key(s.f) = bin_key($1) OR bin_key(s.t) = bin_key($1)
      GROUP BY s.user_name, s.f, s.t, date_trunc('minute', s.ts) ORDER BY 1 DESC LIMIT 50`, [code, REVERT_SINCE]);
-  return r.rows.map((x) => ({ ts: x.ts, by: x.user_name, from: x.f, to: x.t, items: x.items, undone: x.undone,
+  const out = r.rows.map((x) => ({ ts: x.ts, by: x.user_name, from: x.f, to: x.t, items: x.items, undone: x.undone,
     dir: x.out ? "out" : "in" }));
+  // For a swap out, follow where those items went next (e.g. 115-B → F-164 → E-109).
+  for (const x of out) {
+    if (x.dir !== "out" || x.undone) continue;
+    const then = []; let at = x.to, since = x.ts;
+    for (let hop = 0; hop < 5; hop++) {
+      const n = (await db(`SELECT substring(note from ' → (.*)$') AS t, min(ts) AS ts FROM location_history
+                            WHERE source='swap' AND note LIKE 'Bin swap % → %' AND bin_key(substring(note from '^Bin swap (.*) → ')) = bin_key($1) AND ts > $2
+                            GROUP BY 1 ORDER BY 2 LIMIT 1`, [at, since])).rows[0];
+      if (!n) break;
+      then.push(n.t); at = n.t; since = n.ts;
+    }
+    if (then.length) x.then = then;
+  }
+  return out;
 }
 app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;

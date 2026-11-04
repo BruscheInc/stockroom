@@ -1092,7 +1092,7 @@ function swapHist(d){
   if(!sw.length && !arc) return "";
   const line=(x)=>{ const other=x.dir==="out"?x.to:x.from;
     return `<div class="h" style="${x.undone?"opacity:.55":""}"><span>${x.dir==="out"
-        ? `Swapped <b>out</b> to <a href="#" onclick="lookup('BIN-${esc(other)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(other)}</a>`
+        ? `Swapped <b>out</b> to <a href="#" onclick="lookup('BIN-${esc(other)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(other)}</a>${(x.then||[]).map(t=>` → <a href="#" onclick="lookup('BIN-${esc(t)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(t)}</a>`).join("")}${(x.then||[]).length?` <span class="muted">(then swapped again)</span>`:""}`
         : `Swapped <b>in</b> from <a href="#" onclick="lookup('BIN-${esc(other)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(other)}</a>`}
         · ${x.items} item${x.items===1?"":"s"}${x.undone?' · <span class="role">Undone</span>':""}</span>
       <span class="muted">${esc(x.by||"")} · ${fmt(x.ts)}</span></div>`; };
@@ -1116,7 +1116,7 @@ async function addItemBinCode(sku, bin){
     lookup(sku);
   }catch(e){ toast("Failed",true); }
 }
-function assignItemBin(sku){ const v=$("assignBin")?$("assignBin").value.trim():""; if($("assignBin"))$("assignBin").value=""; addItemBinCode(sku, v); }
+function assignItemBin(sku){ const v=$("assignBin")?$("assignBin").value.trim().replace(/^BIN[-:]/i,""):""; if($("assignBin"))$("assignBin").value=""; addItemBinCode(sku, v); }
 function scanBinForItem(sku){ startCamera((code)=>addItemBinCode(sku, code.replace(/^BIN[-:]/i,""))); }
 // ---- bin view: remove all ----
 async function clearBin(bin){
