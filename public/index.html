@@ -1083,7 +1083,21 @@ function renderBin(d){
         </div>
       </div>
       <table style="margin-top:14px"><thead><tr><th>Item</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
+    </div>
+    ${swapHist(d)}`;
+}
+// Swap history for a bin: which bin it was swapped with, when, by whom, how many items.
+function swapHist(d){
+  const sw=d.swaps||[], arc=d.archived;
+  if(!sw.length && !arc) return "";
+  const line=(x)=>{ const other=x.dir==="out"?x.to:x.from;
+    return `<div class="h" style="${x.undone?"opacity:.55":""}"><span>${x.dir==="out"
+        ? `Swapped <b>out</b> to <a href="#" onclick="lookup('BIN-${esc(other)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(other)}</a>`
+        : `Swapped <b>in</b> from <a href="#" onclick="lookup('BIN-${esc(other)}');return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(other)}</a>`}
+        · ${x.items} item${x.items===1?"":"s"}${x.undone?' · <span class="role">Undone</span>':""}</span>
+      <span class="muted">${esc(x.by||"")} · ${fmt(x.ts)}</span></div>`; };
+  return `<div class="card"><div class="sectlabel" style="margin-top:0">Bin swap history</div>
+    <div class="hist">${arc?`<div class="h"><span>Archived</span><span class="muted">${esc(arc.archived_by||"")} · ${fmt(arc.archived_at)}</span></div>`:""}${sw.map(line).join("")}</div></div>`;
 }
 function reloadBin(bin){ api("/api/bin/"+encodeURIComponent(bin)).then(d=>{ if(d&&!d.error){ renderBin(d); if(NAV.length) $("result").insertAdjacentHTML("afterbegin", backBar()); } }).catch(()=>{}); }
 // ---- item view: assign / remove bins (max 3 per SKU) ----

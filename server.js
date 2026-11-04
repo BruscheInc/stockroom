@@ -877,18 +877,6 @@ async function oneTimeFixes() {
         FROM parsed p GROUP BY loc ORDER BY loc`);
     for (const x of r.rows) console.log(`🔢 ${x.loc}: ${x.n} numbers in use, ${x.mn}–${x.mx} · ${String(x.ranges).slice(0, 400)}`);
   } catch (e) { console.error("🔢 failed:", e.message); }
-  // Read-only: full trail for one bin, printed to the log.
-  try {
-    const BIN = "115-B";
-    const has = (col) => `EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(${col},''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = bin_key($1))`;
-    const h = (await db(`SELECT ts, sku, from_bin, to_bin, user_name, source, note FROM location_history
-                          WHERE (${has("from_bin")} OR ${has("to_bin")}) OR (note ILIKE '%' || $1 || '%') ORDER BY ts, id LIMIT 300`, [BIN])).rows;
-    const now = (await db(`SELECT sku, bin FROM item_location WHERE ${has("bin")} ORDER BY sku`, [BIN])).rows;
-    const arc = (await db(`SELECT code, archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [BIN])).rows[0];
-    console.log(`🧭 ${BIN}: ${h.length} history rows · ${now.length} items in it now · ${arc ? `archived by ${arc.archived_by} ${new Date(arc.archived_at).toISOString()}` : "not archived"}`);
-    for (const x of h) console.log(`🧭 ${new Date(x.ts).toISOString().slice(0, 16)}Z ${x.sku}: "${x.from_bin || ""}" → "${x.to_bin || ""}" · ${x.user_name || ""} (${x.source || ""})${x.note ? " · " + x.note : ""}`);
-    console.log(`🧭 ${BIN} now holds: ${now.map((x) => `${x.sku}[${x.bin}]`).join(" ") || "nothing"}`);
-  } catch (e) { console.error("🧭 bin trail failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
@@ -1095,7 +1083,7 @@ async function resolveCode(raw) {
   if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
     const bin = knownBin.rows[0]?.code || binGuess;
     const items = await binItems(bin);
-    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(bin) };
+    return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(bin), swaps: await binSwaps(bin) };
   }
   // 2) item — try SKU first, then barcode (UPC/EAN). Also strip common order-barcode prefixes.
   let matches = await shopifyFind({ sku: code });
@@ -1597,12 +1585,27 @@ app.get("/api/item/:sku", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Bin contents.
+// Every bin swap into or out of a bin: one line per swap (when, who, the other bin, how many items).
+// Swaps that the Oct 30 undo rolled back are marked as undone.
+async function binSwaps(code) {
+  const r = await db(`WITH s AS (
+      SELECT ts, user_name, sku, substring(note from '^Bin swap (.*) → ') AS f, substring(note from ' → (.*)$') AS t
+        FROM location_history WHERE source='swap' AND note LIKE 'Bin swap % → %'),
+    rv AS (SELECT min(ts) AS at FROM location_history WHERE source='revert')
+    SELECT date_trunc('minute', min(s.ts)) AS ts, s.user_name, s.f, s.t, count(DISTINCT s.sku)::int AS items,
+           bool_and(rv.at IS NOT NULL AND s.ts >= $2 AND s.ts < rv.at) AS undone, bool_or(bin_key(s.f) = bin_key($1)) AS out
+      FROM s, rv WHERE bin_key(s.f) = bin_key($1) OR bin_key(s.t) = bin_key($1)
+     GROUP BY s.user_name, s.f, s.t, date_trunc('minute', s.ts) ORDER BY 1 DESC LIMIT 50`, [code, REVERT_SINCE]);
+  return r.rows.map((x) => ({ ts: x.ts, by: x.user_name, from: x.f, to: x.t, items: x.items, undone: x.undone,
+    dir: x.out ? "out" : "in" }));
+}
 app.get("/api/bin/:code", async (req, res) => {
   if (!guard(req, res)) return;
   try {
     const b = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [req.params.code]);
     const items = await binItems(req.params.code);
-    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(req.params.code) });
+    res.json({ bin: b.rows[0]?.code || req.params.code, label: b.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(req.params.code),
+               swaps: await binSwaps(req.params.code) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // History for a SKU.
