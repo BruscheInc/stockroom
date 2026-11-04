@@ -766,6 +766,8 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   // A scanned bin label reads "BIN-K-122" — keep just the bin code.
   const unlabel = (x) => (x == null ? x : String(x).split(/\s*,\s*/).map((t) => t.trim().replace(/^BIN[-:]/i, "")).join(", "));
   addBin = unlabel(addBin); toBin = unlabel(toBin);
+  const notBins = await skuTokens([...binTokens(addBin), ...binTokens(toBin)]);
+  if (notBins.length) { const e = new Error(`${notBins[0]} is a product SKU, not a bin. Scan the bin label instead.`); e.code = "NOT_A_BIN"; e.status = 400; throw e; }
   // Compute the new location string based on the operation.
   let finalBin;
   const toks = binTokens(fromBin);
@@ -803,8 +805,18 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
 }
 // A warehouse location can hold several comma-separated tokens ("1008-L, G-5"). Split into tokens.
 function binTokens(loc) { return String(loc || "").split(",").map((s) => s.trim()).filter(Boolean); }
+// A product SKU is never a bin (someone scanning a product into the bin box saved one as a bin).
+async function skuTokens(list) {
+  const toks = (list || []).map((t) => String(t || "").trim()).filter(Boolean);
+  if (!toks.length) return [];
+  const r = await db(`SELECT DISTINCT lower(sku) s FROM stock_items WHERE lower(sku) = ANY($1)
+                      UNION SELECT lower(sku) FROM item_location WHERE lower(sku) = ANY($1)`, [toks.map((t) => t.toLowerCase())]);
+  const hit = new Set(r.rows.map((x) => x.s));
+  return toks.filter((t) => hit.has(t.toLowerCase()));
+}
 async function registerBinTokens(loc) {
-  for (const tok of binTokens(loc)) { try { await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [tok]); } catch {} }
+  const bad = new Set((await skuTokens(binTokens(loc))).map((t) => t.toLowerCase()));
+  for (const tok of binTokens(loc)) { if (bad.has(tok.toLowerCase())) continue; try { await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [tok]); } catch {} }
 }
 async function unarchiveTokens(loc, user) {
   try { await db(`DELETE FROM bin_archive WHERE key = ANY(SELECT bin_key(x) FROM unnest(regexp_split_to_array($1, '[,;/|]')) x WHERE trim(x) <> '')`, [loc]); } catch {}
@@ -891,6 +903,27 @@ async function oneTimeFixes() {
       console.log(`🧹 ${x.sku}: "${x.bin}" → "${clean}"`);
     }
     return `${r.length} items fixed`;
+  });
+  try { await db(`CREATE INDEX IF NOT EXISTS stock_items_lsku ON stock_items (lower(sku))`); } catch {}
+  await once("remove-product-skus-saved-as-bins-2026-11-04", async () => {
+    const codes = (await db(`SELECT code FROM bins`)).rows.map((x) => x.code);
+    const bad = await skuTokens(codes);
+    let items = 0;
+    for (const code of bad) {
+      await db(`DELETE FROM bins WHERE code=$1`, [code]);
+      await db(`DELETE FROM bin_archive WHERE key = bin_key($1)`, [code]);
+      const holders = (await db(`SELECT sku, bin FROM item_location WHERE EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(bin,''), '[,;/|]')) x WHERE lower(trim(x)) = lower($1))`, [code])).rows;
+      for (const h of holders) {
+        const clean = binTokens(h.bin).filter((t) => t.toLowerCase() !== code.toLowerCase()).join(", ");
+        await db(`UPDATE item_location SET bin=$2, updated_at=now(), updated_by='cleanup' WHERE sku=$1`, [h.sku, clean || null]);
+        await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source,note) VALUES ($1,$2,$3,'cleanup','cleanup',$4)`, [h.sku, h.bin, clean || null, `Removed ${code} — a product SKU, not a bin`]);
+        await ssQueuePush(h.sku, clean);
+        items++;
+        console.log(`🧹 ${h.sku}: "${h.bin}" → "${clean}"`);
+      }
+      console.log(`🧹 removed bin ${code} (it's a product SKU)`);
+    }
+    return `${bad.length} SKU-bins removed, ${items} items cleaned`;
   });
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
@@ -1095,7 +1128,7 @@ async function resolveCode(raw) {
   // 1) explicit bin QR (app-generated labels use the BIN- prefix), or a known bin code.
   const binGuess = code.replace(/^BIN[-:]/i, "");
   const knownBin = await db(`SELECT code,label FROM bins WHERE lower(code)=lower($1) OR bin_key(code)=bin_key($1) ORDER BY (lower(code)=lower($1)) DESC LIMIT 1`, [binGuess]);
-  if (/^BIN[-:]/i.test(code) || knownBin.rows[0]) {
+  if (/^BIN[-:]/i.test(code) || (knownBin.rows[0] && !(await skuTokens([code])).length)) {
     const bin = knownBin.rows[0]?.code || binGuess;
     const items = await binItems(bin);
     return { type: "bin", bin, label: knownBin.rows[0]?.label || null, items, archived: items.length ? null : await isArchived(bin), swaps: await binSwaps(bin) };
@@ -1651,7 +1684,7 @@ app.post("/api/move", async (req, res) => {
     if (!sku) return res.status(400).json({ error: "sku required" });
     // Actor is derived from the login key, not the client — so history always reflects who is signed in.
     res.json(await moveItem({ sku, toBin, addBin, removeBin, user: actorOf(req), note, qtySeen, source: "scan" }));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 // Bin swap — move everything in one bin to another (E-17 → R-35). Bins match however they were typed
 // (E-17 = E17 = E-017); each item keeps its other bins; the old bin can be dropped from the bin list.
@@ -1725,6 +1758,7 @@ async function doSwap({ from, to, removeFrom, by, skus }) {
   if (Array.isArray(skus)) { const pick = new Set(skus.map(String)); plan.items = plan.items.filter((i) => pick.has(String(i.sku))); }
   else plan.items = plan.items.filter((i) => !i.new_bin);       // only the old bin's items move; the new bin's stay
   if (!plan.to && plan.items.length) { const e = new Error("Enter the bin to move everything into."); e.status = 400; throw e; }
+  if (plan.to && (await skuTokens([plan.to])).length) { const e = new Error(`${plan.to} is a product SKU, not a bin.`); e.status = 400; throw e; }
   const staying = plan.staying || 0;
   if (plan.same) { const e = new Error("That's the same bin."); e.status = 400; throw e; }
   const note = plan.to ? `Bin swap ${plan.from} → ${plan.to}` : `Removed bin ${plan.from}`;
@@ -2062,6 +2096,7 @@ app.post("/api/bins", async (req, res) => {
   try {
     const { code, label } = req.body || {};
     if (!code) return res.status(400).json({ error: "code required" });
+    if ((await skuTokens([code])).length) return res.status(400).json({ error: `${code} is a product SKU, not a bin.` });
     await db(`INSERT INTO bins (code,label) VALUES ($1,$2) ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label`, [code, label || code]);
     const restored = (await db(`DELETE FROM bin_archive WHERE key = bin_key($1)`, [code])).rowCount > 0;
     res.json({ ok: true, code, label: label || code, restored });
