@@ -764,7 +764,7 @@ async function moveItem({ sku, toBin, addBin, removeBin, user, note, qtySeen, so
   const cur = await getItemLocation(sku);
   const fromBin = cur ? cur.bin : null;
   // A scanned bin label reads "BIN-K-122" — keep just the bin code.
-  const unlabel = (x) => (x == null ? x : String(x).split(/\s*,\s*/).map((t) => t.trim().replace(/^BIN[-:]/i, "")).join(", "));
+  const unlabel = (x) => (x == null ? x : String(x).split(/\s*,\s*/).map((t) => t.trim().replace(/^BIN[\s:-]+/i, "")).join(", "));
   addBin = unlabel(addBin); toBin = unlabel(toBin);
   const notBins = await skuTokens([...binTokens(addBin), ...binTokens(toBin)]);
   if (notBins.length) { const e = new Error(`${notBins[0]} is a product SKU, not a bin. Scan the bin label instead.`); e.code = "NOT_A_BIN"; e.status = 400; throw e; }
@@ -905,6 +905,27 @@ async function oneTimeFixes() {
     return `${r.length} items fixed`;
   });
   try { await db(`CREATE INDEX IF NOT EXISTS stock_items_lsku ON stock_items (lower(sku))`); } catch {}
+  // Any "BIN-…" name left in the bin list (from scanned labels) or on an item: keep just the bin code.
+  await once("strip-BIN-prefix-bin-list-2026-11-05", async () => {
+    const strip = (t) => t.replace(/^BIN[\s:-]+/i, "").trim();
+    const items = (await db(`SELECT sku, bin FROM item_location WHERE bin ~* '(^|,)\\s*BIN[\\s:-]'`)).rows;
+    for (const x of items) {
+      const clean = [...new Set(binTokens(x.bin).map(strip).filter(Boolean))].join(", ");
+      await db(`UPDATE item_location SET bin=$2, updated_at=now(), updated_by='cleanup' WHERE sku=$1`, [x.sku, clean || null]);
+      await db(`INSERT INTO location_history (sku,from_bin,to_bin,user_name,source,note) VALUES ($1,$2,$3,'cleanup','cleanup','Removed BIN from a scanned label')`, [x.sku, x.bin, clean || null]);
+      await registerBinTokens(clean); await ssQueuePush(x.sku, clean);
+      console.log(`🧹 ${x.sku}: "${x.bin}" → "${clean}"`);
+    }
+    const rows = (await db(`SELECT code, label FROM bins WHERE code ~* '^BIN[\\s:-]'`)).rows;
+    for (const b of rows) {
+      const clean = strip(b.code);
+      if (clean) await db(`INSERT INTO bins (code,label) VALUES ($1,$1) ON CONFLICT (code) DO NOTHING`, [clean]);
+      await db(`DELETE FROM bin_archive WHERE key = bin_key($1)`, [b.code]);
+      await db(`DELETE FROM bins WHERE code=$1`, [b.code]);
+    }
+    console.log(`🧹 bin list: removed ${rows.length} "BIN-" names${rows.length ? " (" + rows.slice(0, 40).map((b) => b.code).join(", ") + ")" : ""}`);
+    return `${items.length} items, ${rows.length} bin names`;
+  });
   await once("remove-product-skus-saved-as-bins-2026-11-04", async () => {
     const codes = (await db(`SELECT code FROM bins`)).rows.map((x) => x.code);
     const bad = await skuTokens(codes);
