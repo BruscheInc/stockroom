@@ -360,6 +360,14 @@
   .blabel .bx b{font-weight:900;line-height:.95;white-space:nowrap}
   .blabel .code{font-size:.15in;font-weight:800;text-align:center;letter-spacing:.02em;white-space:nowrap}
   .lblprint .blabel{page-break-after:always;break-after:page}
+  .tlabel{width:4in;height:6in;box-sizing:border-box;background:#fff;color:#000;overflow:hidden;position:relative;break-inside:avoid;font-family:"Figtree",Arial,Helvetica,sans-serif}
+  .tlabel .tin{position:absolute;left:0;top:0;box-sizing:border-box;padding:.25in;display:flex;align-items:center;justify-content:center}
+  .tlabel.land .tin{width:6in;height:4in;transform:translate(4in,0) rotate(90deg);transform-origin:top left}
+  .tlabel.port .tin{width:4in;height:6in}
+  .tt,.tlfit{font-weight:900;line-height:1.05;text-align:center;white-space:pre-wrap;overflow-wrap:normal;word-break:normal;letter-spacing:-.01em}
+  .tlprev{width:6in;height:4in;box-sizing:border-box;padding:.25in;background:#fff;color:#000;display:flex;align-items:center;justify-content:center;font-family:"Figtree",Arial,Helvetica,sans-serif}
+  .tlprev.port{width:4in;height:6in}
+  .lblprint .tlabel{page-break-after:always;break-after:page}
   .lblprint .blabel:last-child{page-break-after:auto;break-after:auto}
   #printArea{display:none}
   @media print{
@@ -624,6 +632,25 @@
     <div class="card lblprevwrap"><div id="lblPrev"><div class="muted center">Type a letter and a number.</div></div></div>
     <button class="btn wide" id="lblPrintBtn" onclick="lblPrint()" disabled><i class="ti ti-printer"></i> Print</button>
     <div class="note" style="text-align:left">In the print window pick your label printer and the <b>4 × 2 in</b> label size, margins none, scale 100%.</div>
+
+    <div class="card" style="margin-top:22px">
+      <h1 class="ph">Print words on a 4 × 6 label</h1>
+      <div class="phsub">Type anything — a sign, a shelf note, "DO NOT SHIP". The words are sized to fill the label.</div>
+      <label class="lab" for="tlText">Words</label>
+      <textarea id="tlText" rows="3" placeholder="RETURNS&#10;TO PROCESS" oninput="tlUpdate()" style="width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);resize:vertical"></textarea>
+      <div class="lblform" style="margin-top:10px">
+        <div><label class="lab" for="tlOrient">Direction</label>
+          <select id="tlOrient" onchange="tlUpdate()"><option value="l">Sideways</option><option value="p">Tall</option></select></div>
+        <div><label class="lab" for="tlCopies">Copies</label>
+          <select id="tlCopies" onchange="tlUpdate()"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>10</option><option>20</option></select></div>
+      </div>
+      <label class="vtoggle" style="margin-top:12px"><input type="checkbox" id="tlEach" onchange="tlUpdate()"> Each line is its own label</label>
+      <div id="tlMsg" class="note" style="text-align:left;margin:10px 0 0"></div>
+    </div>
+    <div class="sectlabel">Preview</div>
+    <div class="card lblprevwrap"><div id="tlPrev"><div class="muted center">Type some words.</div></div></div>
+    <button class="btn wide" id="tlPrintBtn" onclick="tlPrint()" disabled><i class="ti ti-printer"></i> Print</button>
+    <div class="note" style="text-align:left">In the print window pick your label printer and the <b>4 × 6 in</b> label size, margins none, scale 100%.</div>
   </section>
   <section id="tab-users" class="hidden">
     <div class="card">
@@ -678,7 +705,7 @@
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><i class="ti ti-building-warehouse"></i>Bins</button>
     <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><i class="ti ti-chart-bar"></i>Bin fill report</button>
     <button class="menuitem" data-tab="binswap" onclick="menuGo('binswap')"><i class="ti ti-arrows-sort"></i>Bin swap</button>
-    <button class="menuitem" data-tab="labels" onclick="menuGo('labels')"><i class="ti ti-printer"></i>Print bin labels</button>
+    <button class="menuitem" data-tab="labels" onclick="menuGo('labels')"><i class="ti ti-printer"></i>Print labels</button>
     <div class="menusec adminonly hidden">Admin</div>
     <button class="menuitem adminonly hidden" data-tab="users" onclick="menuGo('users')"><i class="ti ti-users"></i>Users</button>
     <div class="menusec">Sync</div>
@@ -846,7 +873,7 @@ let lastCode=null;
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
 const TAB_NAMES={binswap:"bin swap",labels:"bin labels",scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
-const PAGE_TITLES={binswap:"Bin swap",labels:"Print bin labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
+const PAGE_TITLES={binswap:"Bin swap",labels:"Print labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -2323,7 +2350,7 @@ async function swArchList(){
 let LBL_FMT=null;
 async function lblInit(){
   if(!LBL_FMT){ try{ LBL_FMT=await api("/api/bins/formats"); if(LBL_FMT.error) LBL_FMT=null; }catch(e){} }
-  lblUpdate();
+  lblUpdate(); tlUpdate();
   if(!IS_TOUCH) setTimeout(()=>{ const l=$("lblLetter"); if(l&&!l.value) l.focus(); },60);
 }
 // R + 35 → "R-35"; locations written letters-last → "35-T". Same house rule as the bin fill report.
@@ -2395,6 +2422,48 @@ async function lblPrint(){
   const all=[]; for(const x of list) for(let i=0;i<copies;i++) all.push(x);
   if($("lblAdd").checked){ try{ const r=await api("/api/bins/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({codes:list.map(x=>x.code)})}); if(r.added||r.restored) toast([r.added?`${r.added} new bin${r.added===1?"":"s"} added`:"", r.restored?`${r.restored} archived bin${r.restored===1?"":"s"} back in use`:""].filter(Boolean).join(" · ")); if(r.restored&&BR) BR._at=0; }catch(e){} }
   lblPrintList(all);
+}
+/* ---------- words on a 4 × 6 in label ---------- */
+// Largest font size (in px at 96/in) at which the text fits the box without breaking a word.
+function tlFit(text,wIn,hIn){
+  const w=wIn*96, h=hIn*96, d=document.createElement("div");
+  d.className="tlfit"; d.style.cssText=`position:absolute;left:-9999px;top:0;width:${w}px;font-family:Figtree,Arial,Helvetica,sans-serif`;
+  d.textContent=text; document.body.appendChild(d);
+  let lo=8, hi=Math.min(h,700);
+  for(let i=0;i<18;i++){ const m=(lo+hi)/2; d.style.fontSize=m+"px"; if(d.scrollHeight<=h && d.scrollWidth<=w) lo=m; else hi=m; }
+  d.remove(); return Math.floor(lo*0.98);
+}
+function tlItems(){
+  const raw=($("tlText").value||"").replace(/\r/g,"").split("\n").map(l=>l.trim()).join("\n").trim();
+  if(!raw) return [];
+  return $("tlEach").checked ? raw.split("\n").filter(Boolean) : [raw];
+}
+function tlDims(){ const land=$("tlOrient").value==="l"; return {land, w:(land?6:4)-0.5, h:(land?4:6)-0.5}; }
+let TL_T=null;
+function tlUpdate(){
+  clearTimeout(TL_T); TL_T=setTimeout(()=>{
+    const items=tlItems(), copies=Number($("tlCopies").value)||1, btn=$("tlPrintBtn"), prev=$("tlPrev");
+    btn.disabled=!items.length;
+    if(!items.length){ $("tlMsg").textContent=""; prev.innerHTML='<div class="muted center">Type some words.</div>'; return; }
+    const total=items.length*copies, {land,w,h}=tlDims();
+    $("tlMsg").innerHTML=`${items.length>1?`${items.length} different labels · `:""}${total} label${total===1?"":"s"}`;
+    btn.innerHTML=`<i class="ti ti-printer"></i> Print ${total} label${total===1?"":"s"}`;
+    const fs=tlFit(items[0],w,h), pw=(land?6:4)*96, ph=(land?4:6)*96;
+    const avail=prev.parentElement.clientWidth-34, sc=Math.min(1,avail/pw, land?1:360/ph);
+    prev.innerHTML=`<div style="width:${pw*sc}px;height:${ph*sc}px;box-shadow:0 0 0 1px var(--line),var(--sh-1);border-radius:6px;overflow:hidden;margin:0 auto"><div class="lblscale" style="transform:scale(${sc})"><div class="tlprev ${land?"":"port"}"><div class="tt" style="font-size:${fs}px">${esc(items[0])}</div></div></div></div>`
+      +(items.length>1?`<div class="muted" style="font-size:12.5px;margin-top:6px">+ ${items.length-1} more: ${esc(items.slice(1,6).join(", "))}${items.length>6?"…":""}</div>`:"");
+  },120);
+}
+function tlPrint(){
+  const items=tlItems(); if(!items.length) return;
+  const copies=Number($("tlCopies").value)||1, {land,w,h}=tlDims();
+  const one=(t)=>`<div class="tlabel ${land?"land":"port"}"><div class="tin"><div class="tt" style="font-size:${tlFit(t,w,h)}px">${esc(t)}</div></div></div>`;
+  const all=[]; for(const t of items){ const html=one(t); for(let i=0;i<copies;i++) all.push(html); }
+  const pa=$("printArea"); pa.innerHTML=`<div class="lblprint">${all.join("")}</div>`;
+  const st=document.createElement("style"); st.id="lblPage";
+  st.textContent="@page{size:4in 6in;margin:0} @media print{#printArea{padding:0!important} html,body{margin:0!important;padding:0!important}}";
+  document.head.appendChild(st); pa.style.display="block";
+  setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; pa.innerHTML=""; st.remove(); },800); },400);
 }
 /* ---------- print one bin's label (the Label button on a bin) ---------- */
 function printLabel(code){
