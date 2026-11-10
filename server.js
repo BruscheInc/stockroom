@@ -1707,6 +1707,40 @@ app.post("/api/move", async (req, res) => {
     res.json(await moveItem({ sku, toBin, addBin, removeBin, user: actorOf(req), note, qtySeen, source: "scan" }));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
+// Incoming inventory: put a received product into a bin it already has, or add a new bin for it.
+app.post("/api/receive", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const { sku, bin, mode, qty } = req.body || {};
+    const b = String(bin || "").trim().replace(/^BIN[\s:-]+/i, "");
+    if (!sku || !b) return res.status(400).json({ error: "Scan the product and the bin." });
+    const n = qty === "" || qty == null ? null : Number(qty);
+    if (n != null && (!Number.isInteger(n) || n < 0 || n > 100000)) return res.status(400).json({ error: "Quantity must be a whole number." });
+    const who = actorOf(req);
+    const cur = await getItemLocation(sku);
+    const have = binTokens(cur && cur.bin);
+    const match = (await db(`SELECT t FROM unnest($1::text[]) t WHERE bin_key(t) = bin_key($2) LIMIT 1`, [have, b])).rows[0];
+    const note = `Received${n != null ? " " + n : ""} → ${match ? match.t : b}`;
+    if (match) {
+      await db(`INSERT INTO location_history (sku,from_bin,to_bin,qty_seen,user_name,source,note) VALUES ($1,$2,$2,$3,$4,'receive',$5)`, [sku, cur.bin, n, who, note]);
+      return res.json({ ok: true, sku, bin: match.t, added: false, bins: cur.bin });
+    }
+    if (mode === "existing") return res.status(400).json({ error: `${b} isn't one of this item's bins.` });
+    const r = await moveItem({ sku, addBin: b, user: who, note, qtySeen: n, source: "receive" });
+    res.json({ ok: true, sku, bin: b, added: true, bins: r.to_bin, shipstation: r.shipstation });
+  } catch (e) { res.status(e.status || (e.code === "MAX_BINS" ? 400 : 500)).json({ error: e.message }); }
+});
+// What's been received recently (newest first).
+app.get("/api/receive/recent", async (req, res) => {
+  if (!guard(req, res)) return;
+  try {
+    const r = await db(`SELECT h.ts, h.sku, h.note, h.user_name, h.qty_seen, coalesce(l.title, s.title) AS title
+                          FROM location_history h LEFT JOIN item_location l ON l.sku = h.sku
+                          LEFT JOIN LATERAL (SELECT title FROM stock_items WHERE sku = h.sku LIMIT 1) s ON true
+                         WHERE h.source = 'receive' ORDER BY h.ts DESC LIMIT 40`);
+    res.json({ items: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Bin swap — move everything in one bin to another (E-17 → R-35). Bins match however they were typed
 // (E-17 = E17 = E-017); each item keeps its other bins; the old bin can be dropped from the bin list.
 async function houseCode(raw) {

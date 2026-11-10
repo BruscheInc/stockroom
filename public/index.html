@@ -368,6 +368,10 @@
   .tlprev{width:6in;height:4in;box-sizing:border-box;padding:.25in;background:#fff;color:#000;display:flex;align-items:center;justify-content:center;font-family:"Figtree",Arial,Helvetica,sans-serif}
   .tlprev.port{width:4in;height:6in}
   .lblprint .tlabel{page-break-after:always;break-after:page}
+  .rcvbins{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+  .rcvbin{flex-direction:column;align-items:center;gap:2px;padding:12px 10px;height:auto}
+  .rcvbin .mono{font-size:19px;font-weight:800;color:var(--accent2)}
+  .rcvbin small{font-size:12px;color:var(--muted);font-weight:600}
   .lblprint .blabel:last-child{page-break-after:auto;break-after:auto}
   #printArea{display:none}
   @media print{
@@ -579,6 +583,24 @@
     </div>
     <div id="actList" class="card"><div class="muted center">Loading…</div></div>
   </section>
+  <section id="tab-receive" class="hidden">
+    <div class="card">
+      <h1 class="ph">Incoming inventory</h1>
+      <div class="phsub">Scan the product, then pick the bin it's going into — one it's already in, or a new one.</div>
+      <label class="lab" for="rcvScan">1 · Product</label>
+      <div class="moverow">
+        <input id="rcvScan" data-osk="1" inputmode="none" placeholder="Scan or type SKU / UPC" autocomplete="off" autocapitalize="off" spellcheck="false"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();rcvSubmit();}">
+        <button class="btn blue" id="rcvCamBtn" onclick="rcvCam()" title="Scan with camera"><i class="ti ti-camera"></i></button>
+        <button class="btn" onclick="rcvSubmit()">Go</button>
+      </div>
+      <div id="rreader" style="display:none;margin-top:10px"></div>
+      <div id="rcvNote" class="note" style="text-align:left;margin:8px 0 0"></div>
+    </div>
+    <div id="rcvItem"></div>
+    <div class="sectlabel">Received recently</div>
+    <div class="card"><div id="rcvRecent" class="hist"><div class="muted">Nothing yet.</div></div></div>
+  </section>
   <section id="tab-binswap" class="hidden">
     <div class="card">
       <h1 class="ph">Bin swap</h1>
@@ -704,6 +726,7 @@
     <div class="menusec">Bins</div>
     <button class="menuitem" data-tab="bins" onclick="menuGo('bins')"><i class="ti ti-building-warehouse"></i>Bins</button>
     <button class="menuitem" data-tab="binreport" onclick="BRO.clear();menuGo('binreport')"><i class="ti ti-chart-bar"></i>Bin fill report</button>
+    <button class="menuitem" data-tab="receive" onclick="menuGo('receive')"><i class="ti ti-download"></i>Incoming</button>
     <button class="menuitem" data-tab="binswap" onclick="menuGo('binswap')"><i class="ti ti-arrows-sort"></i>Bin swap</button>
     <button class="menuitem" data-tab="labels" onclick="menuGo('labels')"><i class="ti ti-printer"></i>Print labels</button>
     <div class="menusec adminonly hidden">Admin</div>
@@ -782,7 +805,7 @@ else {
 function showTab(t){
   if(t==="users" && CURRENT_ROLE!=="admin") t="scan";
   const pt=$("pageTitle"); if(pt) pt.textContent=PAGE_TITLES[t]||"";
-  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","binswap","labels","search","users"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
+  for(const x of ["scan","order","verify","strays","activity","overstock","bins","binreport","binswap","labels","search","users","receive"]){ const tb=$("tab-"+x); if(tb)tb.classList.toggle("hidden",x!==t); const nb=$("nav-"+x); if(nb)nb.classList.toggle("on",x===t); }
   document.querySelectorAll(".menuitem[data-tab]").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
   if(t!=="scan" && camOn) stopCamera();
   if(t==="bins") loadBins();
@@ -795,6 +818,7 @@ function showTab(t){
   if(t==="users"){ loadUsers(); }
   if(t==="labels"){ lblInit(); }
   if(t==="binswap"){ swInit(); }
+  if(t==="receive"){ rcvInit(); }
   if(t==="strays"){ loadStrays(); if(!IS_TOUCH) setTimeout(()=>{ const s=$("strayScan"); if(s) s.focus(); },50); }
 }
 function openMenu(){ const u=$("menuUser"); if(u)u.textContent=CURRENT_USER||""; $("drawer").classList.add("show"); }
@@ -838,6 +862,7 @@ document.addEventListener("keydown",(e)=>{
   if(e.key && e.key.length===1) wedgeBuf+=e.key;
 });
 function onWedgeScan(code){
+  if($("tab-receive") && !$("tab-receive").classList.contains("hidden")){ rcvCode(code); return; }
   if($("tab-order") && !$("tab-order").classList.contains("hidden")){ $("orderScan").value=code; loadOrder(code); }
   else { showTab("scan"); lookup(code,{scan:true}); }
 }
@@ -873,7 +898,7 @@ let lastCode=null;
 let NAV=[], FWD=[], LAST_ITEM_SKU=null;
 try{ history.scrollRestoration="manual"; }catch(_){}
 const TAB_NAMES={binswap:"bin swap",labels:"bin labels",scan:"scan",order:"pick list",verify:"stock verification",strays:"strays",activity:"activity",overstock:"overstock",bins:"bins",binreport:"bin fill report",search:"search results",users:"users"};
-const PAGE_TITLES={binswap:"Bin swap",labels:"Print labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
+const PAGE_TITLES={receive:"Incoming",binswap:"Bin swap",labels:"Print labels",scan:"Scan",order:"Pick list",verify:"Stock verification",strays:"Strays",activity:"Quantity activity",overstock:"Overstock",bins:"Bins",binreport:"Bin fill report",search:"Items",users:"Users"};
 function visibleTab(){ return Object.keys(TAB_NAMES).find(x=>{ const t=$("tab-"+x); return t && !t.classList.contains("hidden"); }) || "scan"; }
 function navReset(){ NAV=[]; FWD=[]; }
 // A snapshot of what's on screen, so it can be put back exactly (back AND forward).
@@ -2464,6 +2489,74 @@ function tlPrint(){
   st.textContent="@page{size:4in 6in;margin:0} @media print{#printArea{padding:0!important} html,body{margin:0!important;padding:0!important}}";
   document.head.appendChild(st); pa.style.display="block";
   setTimeout(()=>{ window.print(); setTimeout(()=>{ pa.style.display="none"; pa.innerHTML=""; st.remove(); },800); },400);
+}
+/* ---------- incoming inventory ---------- */
+let RCV=null;   // the product on screen: {sku,title,image,bins:[]}
+function rcvInit(){ rcvRecent(); if(!IS_TOUCH) setTimeout(()=>{ const e=RCV?$("rcvBin"):$("rcvScan"); if(e) e.focus(); },60); }
+function rcvSubmit(){ const e=$("rcvScan"), v=e.value.trim(); e.value=""; if(v) rcvCode(v); }
+// A scanned bin label (BIN-…) while a product is open puts it there; anything else is a product.
+function rcvCode(code){
+  code=String(code||"").trim(); if(!code) return;
+  if(RCV && /^BIN[\s:-]/i.test(code)){ rcvPut(code.replace(/^BIN[\s:-]+/i,"")); return; }
+  rcvLoad(code);
+}
+function rcvCam(){ if(camOn){ stopCamera(); return; } startCamera(rcvCode,{reader:"rreader",btn:"rcvCamBtn",startText:'<i class="ti ti-camera"></i>',stopText:'<i class="ti ti-x"></i>',note:"rcvNote"}); }
+function rcvBinCam(){ if(camOn){ stopCamera(); return; } startCamera((c)=>rcvPut(String(c).replace(/^BIN[\s:-]+/i,"")),{reader:"rbreader",btn:"rcvBinCamBtn",startText:'<i class="ti ti-camera"></i>',stopText:'<i class="ti ti-x"></i>',note:"rcvMsg"}); }
+async function rcvLoad(code){
+  $("rcvNote").textContent=""; $("rcvItem").innerHTML='<div class="card center muted">Looking up <span class="mono">'+esc(code)+'</span>…</div>';
+  let d; try{ d=await api("/api/resolve?code="+encodeURIComponent(code)); }catch(e){ $("rcvItem").innerHTML=""; $("rcvNote").innerHTML='<span style="color:var(--bad)">Couldn\'t look that up — try again.</span>'; return; }
+  if(!d || d.type!=="item"){ RCV=null; $("rcvItem").innerHTML="";
+    $("rcvNote").innerHTML=`<span style="color:var(--bad)">${d&&d.type==="bin"?`${esc(code)} is a bin — scan the product first.`:`No product found for ${esc(code)}.`}</span>`; return; }
+  RCV={ sku:d.sku, title:d.title||d.sku, image:d.image||"", bins:tokens(d.current_bin), qty:d.total_on_hand };
+  rcvPaint();
+}
+function rcvPaint(msg){
+  const x=RCV; if(!x){ $("rcvItem").innerHTML=""; return; }
+  const cur = x.bins.length
+    ? `<div class="rcvbins">${x.bins.map(b=>`<button class="btn sec rcvbin" onclick="rcvPut(${esc(JSON.stringify(b))},'existing')"><span class="mono">${esc(b)}</span><small>Put here</small></button>`).join("")}</div>`
+    : `<div class="muted" style="margin:4px 0 2px">Not in any bin yet — add a location below.</div>`;
+  $("rcvItem").innerHTML=`<div class="card">
+    <div class="itemhead">${x.image?`<img src="${esc(x.image)}" alt="">`:""}<div style="min-width:0"><div class="title">${esc(x.title)}</div><div class="mono muted" style="font-size:13px">${esc(x.sku)}</div></div></div>
+    <div class="sectlabel" style="margin-top:14px">2 · Where is it going?</div>
+    <div class="lab" style="margin:2px 0 6px">Already binned — currently in:</div>
+    ${cur}
+    <div class="lab" style="margin:14px 0 6px">${x.bins.length?"Or a new location":"New location"}</div>
+    <div class="moverow">
+      <input id="rcvBin" data-osk="1" inputmode="none" placeholder="Scan or type a bin" autocomplete="off" autocapitalize="characters" spellcheck="false"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();rcvPut(this.value);}">
+      <button class="btn blue" id="rcvBinCamBtn" onclick="rcvBinCam()" title="Scan bin label"><i class="ti ti-camera"></i></button>
+      <button class="btn" onclick="rcvPut($('rcvBin').value)">Add</button>
+    </div>
+    <div id="rbreader" style="display:none;margin-top:10px"></div>
+    <label class="lab" for="rcvQty" style="margin:14px 0 6px">How many <span class="muted" style="font-weight:400">(optional)</span></label>
+    <div class="moverow" style="max-width:160px"><input id="rcvQty" data-osk="1" inputmode="none" maxlength="6" placeholder="—" autocomplete="off"></div>
+    <div id="rcvMsg" class="note" style="text-align:left;margin:10px 0 0">${msg||""}</div>
+    <button class="btn sec sm" style="margin-top:10px" onclick="rcvClear()">Cancel</button>
+  </div>`;
+  if(!IS_TOUCH) setTimeout(()=>{ const e=$("rcvBin"); if(e) e.focus(); },60);
+}
+function rcvClear(){ RCV=null; $("rcvItem").innerHTML=""; if(!IS_TOUCH) setTimeout(()=>$("rcvScan").focus(),40); }
+async function rcvPut(bin, mode){
+  const x=RCV; bin=String(bin||"").trim().replace(/^BIN[\s:-]+/i,"");
+  if(!x){ $("rcvNote").innerHTML='<span style="color:var(--bad)">Scan the product first.</span>'; return; }
+  if(!bin){ const e=$("rcvBin"); if(e) e.focus(); return; }
+  const qty=(($("rcvQty")||{}).value||"").replace(/\D/g,"");
+  const m=$("rcvMsg"); if(m) m.textContent="Saving…";
+  let r; try{ r=await api("/api/receive",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sku:x.sku,bin,mode,qty})}); }
+  catch(e){ if(m) m.innerHTML='<span style="color:var(--bad)">Couldn\'t save — try again.</span>'; return; }
+  if(!r || r.error){ if(m) m.innerHTML=`<span style="color:var(--bad)">${esc((r&&r.error)||"Couldn't save")}</span>`; return; }
+  navigator.vibrate&&navigator.vibrate(40);
+  toast(r.added?`${x.sku} → new bin ${r.bin}`:`${x.sku} put in ${r.bin}`);
+  $("rcvNote").innerHTML=`<span style="color:var(--ok,#16a34a)"><i class="ti ti-check"></i> ${esc(x.sku)} ${r.added?`added to new bin <b>${esc(r.bin)}</b>`:`put in <b>${esc(r.bin)}</b>`}${qty?` · ${esc(qty)} pcs`:""}. Scan the next product.</span>`;
+  RCV=null; $("rcvItem").innerHTML=""; rcvRecent();
+  if(!IS_TOUCH) setTimeout(()=>$("rcvScan").focus(),40);
+}
+async function rcvRecent(){
+  const el=$("rcvRecent"); if(!el) return;
+  try{ const d=await api("/api/receive/recent");
+    el.innerHTML = (d.items||[]).length ? d.items.map(i=>`<div class="h"><span><a href="#" onclick="lookup(${esc(JSON.stringify(i.sku))});return false" class="mono" style="color:var(--accent2);font-weight:600">${esc(i.sku)}</a> <span class="muted">${esc(i.title||"")}</span><br>${esc(i.note||"")}</span><span class="muted">${esc(i.user_name||"")} · ${fmt(i.ts)}</span></div>`).join("")
+      : '<div class="muted">Nothing yet.</div>';
+  }catch(e){}
 }
 /* ---------- print one bin's label (the Label button on a bin) ---------- */
 function printLabel(code){
