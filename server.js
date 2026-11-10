@@ -946,6 +946,23 @@ async function oneTimeFixes() {
     }
     return `${bad.length} SKU-bins removed, ${items} items cleaned`;
   });
+  // Read-only: trail for one bin, printed to the log.
+  try {
+    const BIN = "102-L";
+    const has = (col) => `EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(coalesce(${col},''), '[,;/|]')) x WHERE trim(x) <> '' AND bin_key(x) = bin_key($1))`;
+    const h = (await db(`SELECT ts, sku, from_bin, to_bin, user_name, source, note FROM location_history
+                          WHERE (${has("from_bin")} OR ${has("to_bin")}) AND source <> 'import' ORDER BY ts, id LIMIT 300`, [BIN])).rows;
+    const imp = (await db(`SELECT count(DISTINCT sku)::int n, min(ts) a, max(ts) b FROM location_history WHERE (${has("from_bin")} OR ${has("to_bin")}) AND source = 'import'`, [BIN])).rows[0];
+    const now = (await db(`SELECT sku, bin FROM item_location WHERE ${has("bin")} ORDER BY sku`, [BIN])).rows;
+    const arc = (await db(`SELECT code, archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [BIN])).rows[0];
+    const inList = (await db(`SELECT code FROM bins WHERE bin_key(code) = bin_key($1)`, [BIN])).rows.map((x) => x.code);
+    console.log(`🧭 ${BIN}: ${h.length} non-import history rows · import rows for ${imp.n} skus (${imp.a ? new Date(imp.a).toISOString().slice(0,10) : "-"}..${imp.b ? new Date(imp.b).toISOString().slice(0,10) : "-"}) · ${now.length} items now · bin list: ${inList.join(",") || "none"} · ${arc ? `archived by ${arc.archived_by} ${new Date(arc.archived_at).toISOString()}` : "not archived"}`);
+    for (const x of h) console.log(`🧭 ${new Date(x.ts).toISOString().slice(0, 16)}Z ${x.sku}: "${x.from_bin || ""}" → "${x.to_bin || ""}" · ${x.user_name || ""} (${x.source || ""})${x.note ? " · " + x.note : ""}`);
+    console.log(`🧭 ${BIN} now holds: ${now.map((x) => `${x.sku}[${x.bin}]`).join(" ") || "nothing"}`);
+    const skus = [...new Set(h.map((x) => x.sku))];
+    if (skus.length) { const w = (await db(`SELECT sku, coalesce(bin,'') bin FROM item_location WHERE sku = ANY($1) ORDER BY sku`, [skus])).rows;
+      console.log(`🧭 those items are now in: ${w.map((x) => `${x.sku}[${x.bin}]`).join(" ")}`); }
+  } catch (e) { console.error("🧭 bin trail failed:", e.message); }
   await once("restore-F-2-reused-2026-10-30", async () => { const r = await db(`DELETE FROM bin_archive WHERE key = bin_key('F-2') RETURNING code`); return r.rowCount ? `restored ${r.rows[0].code}` : "F-2 wasn't archived"; });
 }
 async function isArchived(code) { return (await db(`SELECT archived_by, archived_at FROM bin_archive WHERE key = bin_key($1)`, [String(code || "").replace(/^BIN[-:]/i, "")])).rows[0] || null; }
